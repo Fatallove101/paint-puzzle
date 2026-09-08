@@ -34,7 +34,8 @@ VersionInfoVersion=2.2.0.0
 Name: "chinesesimp"; MessagesFile: "ChineseSimplified.isl"
 
 [Files]
-Source: "..\dist\方块染色解谜.exe"; DestDir: "{app}"; Flags: ignoreversion
+; 目录版游戏本体:整目录递归安装(含 _internal 运行时依赖)
+Source: "..\dist\方块染色解谜\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
