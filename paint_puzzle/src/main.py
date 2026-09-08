@@ -198,18 +198,21 @@ class Game:
         self.scene = "menu"
 
     def _set_window_icon(self):
-        """把窗口左上角/任务栏图标设为 icon.ico,与 exe 图标保持一致。
+        """把窗口左上角/任务栏图标设为游戏图标,与 exe 图标保持一致。
 
+        优先用 icon.png(SDL_image 稳定支持),失败再回退 icon.ico。
         开发时图标在项目根;打包后通过 --add-data 打进解包目录。
         """
         base = getattr(sys, "_MEIPASS", None)
         if base is None:
             base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        try:
-            icon = pygame.image.load(os.path.join(base, "icon.ico"))
-            pygame.display.set_icon(icon)
-        except Exception:
-            pass  # 图标缺失/损坏不影响运行
+        for name in ("icon.png", "icon.ico"):
+            try:
+                icon = pygame.image.load(os.path.join(base, name))
+                pygame.display.set_icon(icon)
+                return
+            except Exception:
+                continue  # 图标缺失/损坏不影响运行
 
     def _start_new(self):
         self.scene = "difficulty"

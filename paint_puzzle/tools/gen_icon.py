@@ -15,6 +15,7 @@ import pygame  # noqa: E402
 ROOT = os.path.normpath(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
 ICO = os.path.join(ROOT, "icon.ico")
+ICON_PNG = os.path.join(ROOT, "icon.png")
 SIZE = 256
 
 # 2x2 色块用色(取自游戏色板:红/蓝/黄/绿)
@@ -50,11 +51,14 @@ def build_ico(png_path):
 
 def main():
     pygame.init()
+    surf = make_surface()
+    pygame.image.save(surf, ICON_PNG)   # icon.png:供游戏窗口 set_icon 使用
     tmp = os.path.join(ROOT, "_icon256.png")
-    pygame.image.save(make_surface(), tmp)
-    build_ico(tmp)
+    pygame.image.save(surf, tmp)
+    build_ico(tmp)                       # icon.ico:供 exe --icon 使用
     os.remove(tmp)
-    print("icon written:", ICO, os.path.getsize(ICO), "bytes")
+    print("icons written:", ICON_PNG, os.path.getsize(ICON_PNG), "bytes;",
+          ICO, os.path.getsize(ICO), "bytes")
 
 
 if __name__ == "__main__":
