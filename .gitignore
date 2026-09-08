@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.piptmp/
+
+# 编辑器/系统
+.DS_Store
+Thumbs.db
+
+# 游戏运行产物(方块贴图预留目录为空,如需提交图片素材可移除下行)
+# paint_puzzle/pic/
