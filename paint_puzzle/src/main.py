@@ -120,8 +120,15 @@ class Game:
 
     def __init__(self):
         pygame.init()
-        self.screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
-        pygame.display.set_caption("方块染色解谜")
+        # 窗口表面(window surface,可拖拽缩放/全屏)。self.screen 为固定
+        # 960x720 逻辑画布:所有界面元素仍按 960x720 绘制,最终在 draw()
+        # 里整体等比缩放并居中贴到窗口,因此窗口随意缩放/全屏都不会错位。
+        self._display = pygame.display.set_mode((WINDOW_W, WINDOW_H),
+                                                pygame.RESIZABLE)
+        self.screen = pygame.Surface((WINDOW_W, WINDOW_H))
+        self.fullscreen = False
+        self.window_size = (WINDOW_W, WINDOW_H)
+        pygame.display.set_caption("方块染色解谜  [F11] 全屏/窗口 · 可拖动缩放")
         self._set_window_icon()
         self.clock = pygame.time.Clock()
         self.font = make_font(28)
@@ -334,7 +341,7 @@ class Game:
         """返回 True 表示应退出程序。"""
         if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
             return False
-        pos = event.pos
+        pos = self._to_logical(event.pos)
         if self.scene == "menu":
             return self._handle_menu(pos)
         if self.scene == "difficulty":
@@ -652,7 +659,9 @@ class Game:
 
     def on_key(self, key, mods=0):
         """键盘事件;返回 True 表示应退出程序。"""
-        if key == pygame.K_ESCAPE:
+        if key == pygame.K_F11:
+            self.toggle_fullscreen()
+        elif key == pygame.K_ESCAPE:
             if self.scene == "play":
                 self._to_menu()
             elif self.scene == "difficulty":
@@ -668,6 +677,36 @@ class Game:
             self.undo()
         return False
 
+    # ================================================================ 窗口/缩放
+    def _display_size(self):
+        return self._display.get_size()
+
+    def _to_logical(self, pos):
+        """把窗口像素坐标换算回 960x720 逻辑坐标(考虑缩放与居中留边)。"""
+        w, h = self._display_size()
+        scale = min(w / WINDOW_W, h / WINDOW_H)
+        if scale <= 0:
+            return (0, 0)
+        ox = (w - WINDOW_W * scale) / 2.0
+        oy = (h - WINDOW_H * scale) / 2.0
+        return (int((pos[0] - ox) / scale), int((pos[1] - oy) / scale))
+
+    def handle_resize(self, event):
+        """窗口被拖拽改大小:重建窗口表面;逻辑画布不变,内容自动缩放。"""
+        if not self.fullscreen:
+            self.window_size = (event.w, event.h)
+            self._display = pygame.display.set_mode(self.window_size,
+                                                    pygame.RESIZABLE)
+
+    def toggle_fullscreen(self):
+        self.fullscreen = not self.fullscreen
+        if self.fullscreen:
+            self.window_size = self._display.get_size()
+            self._display = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        else:
+            self._display = pygame.display.set_mode(self.window_size,
+                                                    pygame.RESIZABLE)
+
     # ================================================================ 渲染
     def draw(self):
         self.screen.fill(BG)
@@ -681,6 +720,17 @@ class Game:
             self._draw_settings()
         else:
             self._draw_play()
+        self._present()
+
+    def _present(self):
+        """把 960x720 逻辑画布等比缩放到窗口并显示(居中,留边填充黑色)。"""
+        w, h = self._display_size()
+        scale = min(w / WINDOW_W, h / WINDOW_H)
+        sw, sh = max(1, int(WINDOW_W * scale)), max(1, int(WINDOW_H * scale))
+        self._display.fill((0, 0, 0))
+        self._display.blit(pygame.transform.scale(self.screen, (sw, sh)),
+                           ((w - sw) // 2, (h - sh) // 2))
+        pygame.display.flip()
 
     # ---- 通用按钮
     def _draw_button(self, rect, label, enabled=True, accent=False,
@@ -1010,6 +1060,8 @@ def main():
                 if game.scene == "play":
                     game._save_progress()
                 running = False
+            elif event.type == pygame.VIDEORESIZE:
+                game.handle_resize(event)
             elif event.type == pygame.KEYDOWN:
                 if game.on_key(event.key, event.mod):
                     running = False
@@ -1017,7 +1069,6 @@ def main():
                 running = False
         game.update(dt)
         game.draw()
-        pygame.display.flip()
     pygame.quit()
     sys.exit(0)
 

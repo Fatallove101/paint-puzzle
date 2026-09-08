@@ -24,7 +24,7 @@ SetupIconFile=..\icon.ico
 ; 卸载项在"设置→应用"中显示的图标 = 游戏 exe
 UninstallDisplayIcon={app}\方块染色解谜.exe
 OutputDir=D:\Mini programme\paint_puzzle\installer_out
-OutputBaseFilename={#MyAppName}-Setup-纯净版
+OutputBaseFilename={#MyAppName}-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -41,3 +41,35 @@ Source: "..\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 [Icons]
 Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\方块染色解谜.exe"
 Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\方块染色解谜.exe"
+
+[Code]
+// 卸载程序改名为 uninstall.exe:安装完成后把 unins000.exe/.dat 重命名,
+// 并让注册表卸载项指向新名称(仍出现在"设置→应用"并可卸载)。
+function RebrandUninstaller(): Boolean;
+var
+  AppDir, OldExe, NewExe, OldDat, NewDat, Key: String;
+begin
+  AppDir := ExpandConstant('{app}');
+  OldExe := AppDir + '\unins000.exe';
+  NewExe := AppDir + '\uninstall.exe';
+  OldDat := AppDir + '\unins000.dat';
+  NewDat := AppDir + '\uninstall.dat';
+  if FileExists(NewExe) then
+    DeleteFile(NewExe);
+  if FileExists(OldExe) then
+    RenameFile(OldExe, NewExe);
+  if FileExists(OldDat) then
+    RenameFile(OldDat, NewDat);
+  Key := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\PaintPuzzle_is1';
+  if RegValueExists(HKA, Key, 'UninstallString') then
+    RegWriteStringValue(HKA, Key, 'UninstallString', '"' + NewExe + '"');
+  if RegValueExists(HKA, Key, 'QuietUninstallString') then
+    RegWriteStringValue(HKA, Key, 'QuietUninstallString', '"' + NewExe + '"');
+  Result := True;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    RebrandUninstaller();
+end;
