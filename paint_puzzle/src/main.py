@@ -34,9 +34,15 @@ PAINT_DUR = 0.18        # 单个方块染色渐变时长(秒)
 HINT_SHOW_SEC = 4.0     # 提示高亮与文案的显示时长(秒)
 VERSION = "v2.0"
 
-# 存档路径(项目根目录 save.json,不入 git)
-SAVE_PATH = os.path.normpath(os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "save.json"))
+# 存档路径:开发时在项目根 save.json;打包成 exe 后放在 exe 同目录(不入 git)
+def _save_path():
+    if getattr(sys, "frozen", False):
+        return os.path.join(os.path.dirname(sys.executable), "save.json")
+    return os.path.normpath(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "save.json"))
+
+
+SAVE_PATH = _save_path()
 
 # 26 种游戏颜色:精选高饱和、高区分度色板,按"前缀互异性"排序——
 # 任意前 N 个颜色放在一起都容易区分(每关只取前 num_colors 种)。
@@ -999,4 +1005,22 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if getattr(sys, "frozen", False):
+        # 打包成 exe 时无控制台,出错时把信息写到 exe 同目录"启动错误.log"
+        try:
+            main()
+        except SystemExit:
+            raise
+        except Exception:
+            import traceback
+            log = os.path.join(os.path.dirname(sys.executable),
+                               "启动错误.log")
+            try:
+                with open(log, "a", encoding="utf-8") as f:
+                    f.write("=" * 40 + "\n")
+                    traceback.print_exc(file=f)
+            except OSError:
+                pass
+            raise SystemExit(1)
+    else:
+        main()

@@ -1,10 +1,21 @@
 # -*- coding: utf-8 -*-
 """音效加载与播放;snd/ 缺文件或混音器不可用时静默跳过。"""
 import os
+import sys
 
 import pygame
 
-SND_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "snd"))
+
+def _resource_root():
+    """资源根目录:打包成 exe 时取解包目录/程序目录,开发时取项目根。"""
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        return meipass
+    return os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         ".."))
+
+
+SND_DIR = os.path.join(_resource_root(), "snd")
 
 
 class Audio:
