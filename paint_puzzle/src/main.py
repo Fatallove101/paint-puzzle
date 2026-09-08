@@ -122,6 +122,7 @@ class Game:
         pygame.init()
         self.screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
         pygame.display.set_caption("方块染色解谜")
+        self._set_window_icon()
         self.clock = pygame.time.Clock()
         self.font = make_font(28)
         self.font_small = make_font(22)
@@ -195,6 +196,20 @@ class Game:
         """对局中按 ESC:保存进度后回到主菜单。"""
         self._save_progress()
         self.scene = "menu"
+
+    def _set_window_icon(self):
+        """把窗口左上角/任务栏图标设为 icon.ico,与 exe 图标保持一致。
+
+        开发时图标在项目根;打包后通过 --add-data 打进解包目录。
+        """
+        base = getattr(sys, "_MEIPASS", None)
+        if base is None:
+            base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        try:
+            icon = pygame.image.load(os.path.join(base, "icon.ico"))
+            pygame.display.set_icon(icon)
+        except Exception:
+            pass  # 图标缺失/损坏不影响运行
 
     def _start_new(self):
         self.scene = "difficulty"
