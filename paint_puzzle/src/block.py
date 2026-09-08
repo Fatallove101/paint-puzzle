@@ -51,6 +51,11 @@ class Block:
         self.color = idx
         self._anim = [delay, 0.0, dur, from_rgb, to_rgb]
 
+    def set_instant(self, idx):
+        """撤销/重置用:立刻把方块设成指定颜色,不播放渐变动画。"""
+        self.color = idx
+        self._anim = None
+
     def display_rgb(self, palette):
         if self._anim is None:
             return palette[self.color]

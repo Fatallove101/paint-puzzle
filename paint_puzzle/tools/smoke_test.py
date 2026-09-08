@@ -21,6 +21,16 @@ from level import (generate_level, load_level, next_hint_move,  # noqa: E402
 
 FAILURES = []
 
+SAVE_FILE = os.path.join(ROOT, "save.json")
+
+
+def cleanup_save():
+    """测试前/后清掉存档,保证界面流程测试确定性、仓库干净。"""
+    try:
+        os.remove(SAVE_FILE)
+    except OSError:
+        pass
+
 
 def check(name, cond):
     print(("PASS " if cond else "FAIL ") + name)
@@ -61,6 +71,7 @@ def test_generator_solvability():
 
 def test_paint_row_and_steps():
     game = game_mod.Game()
+    game._load_level(1)
     brush = game.row_brushes[1]
     game.cur_color = 2
     game.paint(brush)
@@ -329,6 +340,91 @@ def test_dead_end_auto_reset():
     check("hint: dead-end auto-resets the level", ok)
 
 
+def test_undo_easy():
+    """简单难度撤销:退回染色前状态(棋盘全空、步数还原)。"""
+    game = game_mod.Game()
+    game._load_level(1)
+    game.cur_color = 2
+    brush = game.row_brushes[1]
+    game.paint(brush)
+    settle(game)
+    check("undo: paint took effect", game.steps_used == 1
+          and all(b.color == 2 for b in game.blocks if b.row == 1))
+    ok = game.undo()
+    check("undo: restores blank board + steps + clears stack",
+          ok and game.steps_used == 0 and not game.undo_stack
+          and all(b.color == 0 for b in game.blocks))
+    pygame_quit(game)
+
+
+def test_hard_mode_brush_color_and_undo():
+    """困难难度:用笔刷自带随机色染色、用后换色;撤销还原笔刷颜色。"""
+    game = game_mod.Game()
+    game.mode = "hard"
+    game._load_level(1)
+    brush = game.row_brushes[2]
+    c = brush.color
+    game.paint(brush)
+    settle(game)
+    check("hard: row painted with brush own color",
+          all(b.color == c for b in game.blocks if b.row == 2))
+    check("hard: brush rerolled to a different color", brush.color != c)
+    game.undo()
+    check("hard: undo restores brush color and blank board",
+          brush.color == c and game.steps_used == 0
+          and all(b.color == 0 for b in game.blocks))
+    # 提示在困难模式应把笔刷颜色调成所需颜色
+    game2 = game_mod.Game()
+    game2.mode = "hard"
+    game2._load_level(3)
+    game2.use_hint()
+    check("hard: hint gives a brush with legal color",
+          game2.hint_brush is not None
+          and 1 <= game2.hint_brush.color <= game2.num_colors)
+    pygame_quit(game)
+    pygame_quit(game2)
+
+
+def test_scene_flow():
+    """界面流程:主菜单 → 难度 → 关卡 → 对局;返回与退出。"""
+    game = game_mod.Game()
+    check("flow: starts at menu scene", game.scene == "menu")
+    buttons = dict((k, (r.center, enabled))
+                   for k, label, r, enabled in game._menu_buttons())
+    check("flow: continue disabled without save", not buttons["continue"][1])
+    # 开始游戏 → 难度
+    game.handle_event(make_click(buttons["start"][0]))
+    check("flow: start -> difficulty", game.scene == "difficulty")
+    # 返回
+    for key, rect in game._difficulty_buttons():
+        if key == "back":
+            pt = rect.center
+    game.handle_event(make_click(pt))
+    check("flow: difficulty back -> menu", game.scene == "menu")
+    # 再进:选择困难 → 关卡选择第 5 关
+    game.handle_event(make_click(buttons["start"][0]))
+    for key, rect in game._difficulty_buttons():
+        if key == "hard":
+            pt = rect.center
+    game.handle_event(make_click(pt))
+    check("flow: hard difficulty chosen", game.scene == "levels"
+          and game.mode == "hard")
+    for key, rect in game._level_buttons():
+        if key == "lv5":
+            pt = rect.center
+    game.handle_event(make_click(pt))
+    check("flow: pick level 5 -> play", game.scene == "play"
+          and game.level_num == 5 and game.mode == "hard")
+    # ESC 返回主菜单(不退出)
+    quit_app = game.on_key(pygame.K_ESCAPE)
+    check("flow: ESC in play -> menu", not quit_app and game.scene == "menu")
+    # 主菜单"退出游戏"返回退出标记
+    buttons2 = dict((k, r.center) for k, label, r, enabled in game._menu_buttons())
+    quit_app = game.handle_event(make_click(buttons2["exit"]))
+    check("flow: exit option quits app", quit_app)
+    pygame_quit(game)
+
+
 def make_click(pos):
     e = pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": pos})
     return e
@@ -340,6 +436,7 @@ def pygame_quit(game):
 
 
 def main():
+    cleanup_save()
     test_generator_solvability()
     test_paint_row_and_steps()
     test_win_by_replaying_solution()
@@ -349,6 +446,11 @@ def main():
     test_full_level_via_game_hints()
     test_generated_levels_hint_clear()
     test_dead_end_auto_reset()
+    test_undo_easy()
+    test_hard_mode_brush_color_and_undo()
+    cleanup_save()   # 前面测试可能写过进度,先清掉再验证"继续游戏"禁用态
+    test_scene_flow()
+    cleanup_save()
     print("=" * 40)
     if FAILURES:
         print("%d test(s) FAILED" % len(FAILURES))

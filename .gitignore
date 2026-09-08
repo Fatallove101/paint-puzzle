@@ -5,6 +5,9 @@ __pycache__/
 .venv/
 .piptmp/
 
+# 游戏运行存档(进度/设置)
+paint_puzzle/save.json
+
 # 编辑器/系统
 .DS_Store
 Thumbs.db

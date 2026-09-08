@@ -2,10 +2,20 @@
 """方块染色解谜游戏 主入口。
 
 运行: python src/main.py
-点击棋盘左侧画刷染整行、底部画刷染整列,在限定步数内把棋盘
-染成左侧目标图案即可通关;步数耗尽则关卡重置。
+
+界面流程:
+  主菜单(开始游戏 / 继续上次关卡 / 设置 / 退出游戏)
+  → 选择难度(简单:色板自选颜色;困难:随机笔刷色)
+  → 选择关卡(第 1~10 关,第 11 关起打完一关自动随机生成下一关)
+  → 在限定步数内把棋盘染成与左侧目标一致即通关。
+
+对局内:点行/列画刷染色;每关可"提示"(次数=剩余步数)、
+可"撤销"(Ctrl+Z)退回上一步;步数耗尽或死局自动重置。
 """
+import json
 import math
+import os
+import random
 import sys
 
 import pygame
@@ -22,6 +32,11 @@ CELL_SIZE = 64          # 方块边长(像素)
 PAINT_DELAY = 0.04      # 相邻方块染色的错峰间隔(秒)
 PAINT_DUR = 0.18        # 单个方块染色渐变时长(秒)
 HINT_SHOW_SEC = 4.0     # 提示高亮与文案的显示时长(秒)
+VERSION = "v2.0"
+
+# 存档路径(项目根目录 save.json,不入 git)
+SAVE_PATH = os.path.normpath(os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "save.json"))
 
 # 26 种游戏颜色:精选高饱和、高区分度色板,按"前缀互异性"排序——
 # 任意前 N 个颜色放在一起都容易区分(每关只取前 num_colors 种)。
@@ -64,6 +79,25 @@ PALETTE_Y = 94                  # 色板行(色块)顶部 y 坐标
 PALETTE_CHIP = 40               # 色块边长(像素)
 PALETTE_GAP = 12                # 色块间距
 
+BG = (32, 36, 44)               # 背景色
+PANEL = (46, 52, 62)            # 面板色
+BTN = (70, 80, 96)              # 按钮底色
+BTN_HI = (92, 106, 128)         # 按钮高亮色(悬停/强调)
+TEXT = (240, 240, 240)
+TEXT_DIM = (180, 186, 196)
+GOLD = (255, 230, 120)
+
+# 设置页玩法说明(手动折行)
+HELP_LINES = [
+    "目标:在限定步数内,把棋盘染成与左侧目标图案完全一致即通关。",
+    "操作:先选颜色(简单难度),再点行/列画刷染色;每步消耗 1 点。",
+    "提示:剩余每步都可点一次提示,给出最佳下一步,跟提示可通关。",
+    "撤销:点\"撤销\"或按 Ctrl+Z 退回上一步;点\"重试\"本关重来。",
+    "死局:留白处被染色后无法还原,会提示并自动重试本关。",
+    "难度:简单=色板自选颜色;困难=笔刷随机换色(提示可替你设好)。",
+    "进度:ESC 回到主菜单,下次可从\"继续游戏\"接着上次的难度和关卡。",
+]
+
 
 def make_font(size):
     names = [n for n in pygame.font.get_fonts()
@@ -75,7 +109,7 @@ def make_font(size):
 
 
 class Game:
-    """游戏框架:改 load_level 的参数即可生成不同大小的棋盘。"""
+    """游戏主框架:界面状态机(menu/difficulty/levels/settings/play)+ 对局逻辑。"""
 
     def __init__(self):
         pygame.init()
@@ -84,10 +118,19 @@ class Game:
         self.clock = pygame.time.Clock()
         self.font = make_font(28)
         self.font_small = make_font(22)
+        self.font_title = make_font(58)
+        self.font_big = make_font(36)
         self.audio = Audio()
-        self.retry_rect = pygame.Rect(800, 26, 110, 40)
-        self.hint_rect = pygame.Rect(670, 26, 110, 40)
-        self.state = "play"     # play / win / fail
+        self.rng = random.Random()
+
+        # 存档 / 设置
+        self.save = self._read_save()
+        self.audio.enabled = bool(self.save and self.save.get("sound", True))
+
+        # 界面与对局状态
+        self.scene = "menu"     # menu / difficulty / levels / settings / play
+        self.mode = "easy"      # easy(色板自选) / hard(随机笔刷色)
+        self.state = "play"     # 对局内状态: play / win / fail
         self.win_t = 0.0
         self.fail_t = 0.0
         self.soft_reset_t = 0.0  # 提示发现"死局"后的自动重置倒计时(秒)
@@ -95,10 +138,73 @@ class Game:
         self.hint_brush = None  # 提示中的画刷
         self.hint_msg = ""
         self.hint_msg_t = 0.0
-        self.cur_color = 1      # 当前选中的染色颜色(色板)
-        self.palette_rects = []  # [(颜色索引, Rect), ...],由 _reset_board 构建
+        self.cur_color = 1      # 简单难度:当前选中的染色颜色(色板)
+        self.palette_rects = []  # [(颜色索引, Rect), ...]
+        self.undo_stack = []    # 撤销栈(每次成功染色前压栈)
+
+        # 对局数据(进入关卡后填充;主菜单阶段为空)
         self.level_num = 1
-        self._load_level(1)
+        self.rows = self.cols = self.num_colors = 0
+        self.target = []
+        self.max_steps = 0
+        self.solution = []
+        self.blocks = []
+        self.row_brushes = []
+        self.col_brushes = []
+
+        # 顶栏按钮
+        self.undo_rect = pygame.Rect(556, 26, 104, 40)
+        self.hint_rect = pygame.Rect(670, 26, 110, 40)
+        self.retry_rect = pygame.Rect(800, 26, 110, 40)
+
+    # ================================================================ 存档
+    def _read_save(self):
+        try:
+            with open(SAVE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("mode") in ("easy", "hard"):
+                return {"mode": data["mode"],
+                        "level": max(1, int(data.get("level", 1))),
+                        "sound": bool(data.get("sound", True))}
+        except Exception:
+            pass
+        return None
+
+    def _save_progress(self):
+        try:
+            with open(SAVE_PATH, "w", encoding="utf-8") as f:
+                json.dump({"mode": self.mode, "level": self.level_num,
+                           "sound": self.audio.enabled}, f,
+                          ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+
+    # ================================================================ 流程
+    def _to_menu(self):
+        """对局中按 ESC:保存进度后回到主菜单。"""
+        self._save_progress()
+        self.scene = "menu"
+
+    def _start_new(self):
+        self.scene = "difficulty"
+
+    def _choose_difficulty(self, mode):
+        self.mode = mode
+        self.scene = "levels"
+
+    def _pick_level(self, num):
+        self._go_play(num)
+
+    def _continue_game(self):
+        if not self.save:
+            return
+        self.mode = self.save["mode"]
+        self._go_play(self.save["level"])
+
+    def _go_play(self, num):
+        """正式进入某一关(并保存进度)。"""
+        self._load_level(num)
+        self._save_progress()
 
     # ------------------------------------------------ 关卡装载
     def _load_level(self, num):
@@ -110,14 +216,16 @@ class Game:
         self.target = data["target"]
         self.max_steps = data["max_steps"]
         self.solution = data["solution"]
+        self.scene = "play"
         self._reset_board()
 
     def _reset_board(self):
-        """重置当前关卡:棋盘清空、步数恢复;选中颜色保留(超范围则取 1)。"""
+        """重置当前关卡:棋盘清空、步数恢复、撤销栈清空。"""
         self.blocks = []
         for r in range(self.rows):
             for c in range(self.cols):
-                rect = pygame.Rect(BOARD_X + c * CELL_SIZE, BOARD_Y + r * CELL_SIZE,
+                rect = pygame.Rect(BOARD_X + c * CELL_SIZE,
+                                   BOARD_Y + r * CELL_SIZE,
                                    CELL_SIZE, CELL_SIZE)
                 self.blocks.append(Block(r, c, rect))
         self.row_brushes = []
@@ -125,13 +233,17 @@ class Game:
         for r in range(self.rows):
             rect = pygame.Rect(BOARD_X - BRUSH_W - 8, BOARD_Y + r * CELL_SIZE + 2,
                                BRUSH_W, CELL_SIZE - 4)
-            self.row_brushes.append(Brush("row", r, rect))
+            color = self.rng.randint(1, self.num_colors) \
+                if self.mode == "hard" else None
+            self.row_brushes.append(Brush("row", r, rect, color))
         for c in range(self.cols):
             rect = pygame.Rect(BOARD_X + c * CELL_SIZE + 2,
                                BOARD_Y + self.rows * CELL_SIZE + 8,
                                CELL_SIZE - 4, BRUSH_W)
-            self.col_brushes.append(Brush("col", c, rect))
-        # 色板:本关可用颜色 1..num_colors 横排居中,点击即切换当前染色色
+            color = self.rng.randint(1, self.num_colors) \
+                if self.mode == "hard" else None
+            self.col_brushes.append(Brush("col", c, rect, color))
+        # 色板(简单难度):本关可用颜色 1..num_colors 横排居中
         if not (1 <= self.cur_color <= self.num_colors):
             self.cur_color = 1
         total_w = self.num_colors * PALETTE_CHIP \
@@ -151,8 +263,13 @@ class Game:
         self.hint_brush = None
         self.hint_msg = ""
         self.hint_msg_t = 0.0
+        self.undo_stack = []
 
-    # ------------------------------------------------ 状态查询
+    # ================================================================ 状态查询
+    @property
+    def all_brushes(self):
+        return self.row_brushes + self.col_brushes
+
     @property
     def steps_left(self):
         return self.max_steps - self.steps_used
@@ -166,49 +283,170 @@ class Game:
     def busy(self):
         return any(b.busy for b in self.blocks)
 
+    @property
+    def difficulty_name(self):
+        return "简单" if self.mode == "easy" else "困难"
+
     def _matched(self):
         for b in self.blocks:
             if b.color != self.target[b.row][b.col]:
                 return False
         return True
 
-    # ------------------------------------------------ 交互
+    # ================================================================ 对局交互
     def handle_event(self, event):
+        """返回 True 表示应退出程序。"""
         if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
-            return
+            return False
         pos = event.pos
+        if self.scene == "menu":
+            return self._handle_menu(pos)
+        if self.scene == "difficulty":
+            self._handle_difficulty(pos)
+            return False
+        if self.scene == "levels":
+            self._handle_levels(pos)
+            return False
+        if self.scene == "settings":
+            self._handle_settings(pos)
+            return False
+        # ---- play ----
         if self.state == "win":
             if self.win_t > 0.9:
-                self._load_level(self.level_num + 1)
-            return
-        if self.state != "play":
-            return
+                self._go_play(self.level_num + 1)
+            return False
+        if self.state not in ("play", "fail"):
+            return False
         if self.retry_rect.collidepoint(pos):
             self._reset_board()
             self.audio.play("click")
-            return
-        if self.hint_rect.collidepoint(pos):
+        elif self.hint_rect.collidepoint(pos):
             self.use_hint()
-            return
-        for idx, rect in self.palette_rects:   # 色板:切换当前染色颜色
+        elif self.undo_rect.collidepoint(pos):
+            self.undo()
+        elif self.mode == "easy":
+            for idx, rect in self.palette_rects:   # 色板:切换当前染色色
+                if rect.collidepoint(pos):
+                    if idx != self.cur_color:
+                        self.cur_color = idx
+                        self.audio.play("click")
+                    return False
+            for brush in self.all_brushes:
+                if brush.hit(pos):
+                    self.paint(brush)
+                    return False
+        else:
+            for brush in self.all_brushes:
+                if brush.hit(pos):
+                    self.paint(brush)
+                    return False
+        return False
+
+    # ---- 主菜单
+    def _menu_buttons(self):
+        items = [("start", "开始游戏"), ("continue", "继续游戏"),
+                 ("settings", "设置"), ("exit", "退出游戏")]
+        out = []
+        for i, (key, label) in enumerate(items):
+            rect = pygame.Rect(0, 300 + i * 80, 300, 58)
+            rect.centerx = WINDOW_W // 2
+            enabled = key != "continue" or bool(self.save)
+            out.append((key, label, rect, enabled))
+        return out
+
+    def _handle_menu(self, pos):
+        for key, label, rect, enabled in self._menu_buttons():
             if rect.collidepoint(pos):
-                if idx != self.cur_color:
-                    self.cur_color = idx
-                    self.audio.play("click")
-                return
-        for brush in self.row_brushes + self.col_brushes:
-            if brush.hit(pos):
-                self.paint(brush)
+                if not enabled:
+                    return False
+                self.audio.play("click")
+                if key == "start":
+                    self._start_new()
+                elif key == "continue":
+                    self._continue_game()
+                elif key == "settings":
+                    self.scene = "settings"
+                elif key == "exit":
+                    self._save_progress()
+                    return True
+                return False
+        return False
+
+    # ---- 难度选择
+    def _difficulty_buttons(self):
+        back = pygame.Rect(40, 34, 120, 46)
+        easy = pygame.Rect(0, 300, 380, 150)
+        easy.centerx = 250
+        hard = pygame.Rect(0, 300, 380, 150)
+        hard.centerx = 710
+        return [("easy", easy), ("hard", hard), ("back", back)]
+
+    def _handle_difficulty(self, pos):
+        for key, rect in self._difficulty_buttons():
+            if rect.collidepoint(pos):
+                self.audio.play("click")
+                if key in ("easy", "hard"):
+                    self._choose_difficulty(key)
+                elif key == "back":
+                    self.scene = "menu"
                 return
 
+    # ---- 关卡选择
+    def _level_buttons(self):
+        back = pygame.Rect(40, 34, 120, 46)
+        w = h = 92
+        gap = 16
+        total = 5 * w + 4 * gap
+        x0 = (WINDOW_W - total) // 2
+        rects = [("back", back)]
+        for i in range(10):
+            col, row = i % 5, i // 5
+            rects.append(("lv%d" % (i + 1),
+                          pygame.Rect(x0 + col * (w + gap),
+                                      260 + row * (h + 16), w, h)))
+        return rects
+
+    def _handle_levels(self, pos):
+        for key, rect in self._level_buttons():
+            if rect.collidepoint(pos):
+                self.audio.play("click")
+                if key == "back":
+                    self.scene = "difficulty"
+                elif key.startswith("lv"):
+                    self._pick_level(int(key[2:]))
+                return
+
+    # ---- 设置
+    def _sound_rect(self):
+        return pygame.Rect(300, 208, 140, 48)
+
+    def _settings_back_rect(self):
+        return pygame.Rect(0, 640, 220, 52).move((WINDOW_W - 220) // 2, 0)
+
+    def _handle_settings(self, pos):
+        if self._sound_rect().collidepoint(pos):
+            self.audio.enabled = not self.audio.enabled
+            self.audio.play("click")
+            self._save_progress()
+        elif self._settings_back_rect().collidepoint(pos):
+            self.audio.play("click")
+            self.scene = "menu"
+        elif pygame.Rect(40, 34, 120, 46).collidepoint(pos):
+            self.audio.play("click")
+            self.scene = "menu"
+
+    # ================================================================ 染色/提示/撤销
     def paint(self, brush):
-        """点击画刷:用当前选中的颜色整行/整列错峰染色,消耗 1 步。"""
+        """点击画刷染色:简单=用色板选中色,困难=用笔刷自带随机色。"""
         if self.busy or self.steps_left <= 0 or self.soft_reset_t > 0:
             return
+        if self.state != "play":
+            return
+        self.undo_stack.append(self._snapshot())
         brush.press()
         self.audio.play("click")
         self.audio.play("paint")
-        color = self.cur_color
+        color = brush.color if self.mode == "hard" else self.cur_color
         if brush.orientation == "row":
             line = [b for b in self.blocks if b.row == brush.index]
             line.sort(key=lambda b: b.col)
@@ -219,6 +457,42 @@ class Game:
             block.set_color(color, delay=i * PAINT_DELAY, dur=PAINT_DUR,
                             palette=PALETTE)
         self.steps_used += 1
+        if self.mode == "hard":
+            brush.reroll(self.num_colors)
+
+    # ---- 撤销
+    def _snapshot(self):
+        colors = tuple(b.color for b in self.blocks)
+        bcolors = tuple(br.color for br in self.all_brushes) \
+            if self.mode == "hard" else None
+        return (colors, bcolors, self.cur_color, self.steps_used)
+
+    def undo(self):
+        """撤销最近一次染色:还原棋盘、步数与笔刷颜色,并取消 fail/死局重置。"""
+        if self.scene != "play" or not self.undo_stack:
+            return False
+        if self.busy or self.state not in ("play", "fail"):
+            return False
+        colors, bcolors, cur, steps = self.undo_stack.pop()
+        for b, val in zip(self.blocks, colors):
+            b.set_instant(val)
+        if bcolors is not None:
+            for br, val in zip(self.all_brushes, bcolors):
+                br.color = val
+                br._press_t = 0.0
+                br._flash_t = 0.0
+        self.cur_color = cur
+        self.steps_used = steps
+        self.state = "play"
+        self.win_t = 0.0
+        self.fail_t = 0.0
+        self.soft_reset_t = 0.0
+        self.hint_t = 0.0
+        self.hint_brush = None
+        self.hint_msg = ""
+        self.hint_msg_t = 0.0
+        self.audio.play("click")
+        return True
 
     def _board_colors(self):
         board = [[0] * self.cols for _ in range(self.rows)]
@@ -229,8 +503,8 @@ class Game:
     def use_hint(self):
         """提示:反推求解器给出下一步(染哪一行/列 + 所需颜色)。
 
-        只做两件事:①在色板中自动选中所需颜色;②高亮对应画刷。
-        绝不改变任何画刷——颜色选择权始终在玩家手中,玩家可随时改选。
+        简单难度:只把色板选中所需颜色,不改变画刷;
+        困难难度:把目标画刷设成所需颜色(玩家无法直接控制随机色)。
         提示次数与剩余步数一致,不单独扣减——染色落子时步数自然消耗。
         """
         if self.hints_left <= 0 or self.busy or self.state != "play" \
@@ -249,19 +523,27 @@ class Game:
             return
         orient, i, c = move
         brush = self.row_brushes[i] if orient == "row" else self.col_brushes[i]
-        self.cur_color = c          # 仅选中色板颜色,不触碰任何笔刷
+        where = "第%d行" % (i + 1) if orient == "row" else "第%d列" % (i + 1)
+        if self.mode == "hard":
+            if brush.color != c:
+                brush.color = c
+                brush.flash()
+            self.hint_msg = "提示:点击%s画刷(颜色已替你调好)" % where
+        else:
+            self.cur_color = c          # 仅选中色板颜色,不触碰任何画刷
+            self.hint_msg = "提示:点击%s画刷(颜色已自动选好)" % where
         self.hint_brush = brush
         self.hint_t = HINT_SHOW_SEC
-        where = "第%d行" % (i + 1) if orient == "row" else "第%d列" % (i + 1)
-        self.hint_msg = "提示:点击%s画刷(颜色已自动选好)" % where
         self.hint_msg_t = HINT_SHOW_SEC
         self.audio.play("click")
 
-    # ------------------------------------------------ 帧更新
+    # ================================================================ 帧更新
     def update(self, dt):
+        if self.scene != "play":
+            return
         for b in self.blocks:
             b.update(dt)
-        for br in self.row_brushes + self.col_brushes:
+        for br in self.all_brushes:
             br.update(dt)
 
         if self.soft_reset_t > 0:
@@ -291,24 +573,165 @@ class Game:
             if self.hint_msg_t > 0:
                 self.hint_msg_t = max(0.0, self.hint_msg_t - dt)
 
-    # ------------------------------------------------ 渲染
+    def on_key(self, key, mods=0):
+        """键盘事件;返回 True 表示应退出程序。"""
+        if key == pygame.K_ESCAPE:
+            if self.scene == "play":
+                self._to_menu()
+            elif self.scene == "difficulty":
+                self.scene = "menu"
+            elif self.scene == "levels":
+                self.scene = "difficulty"
+            elif self.scene == "settings":
+                self.scene = "menu"
+            elif self.scene == "menu":
+                self._save_progress()
+                return True
+        elif key == pygame.K_z and (mods & pygame.KMOD_CTRL):
+            self.undo()
+        return False
+
+    # ================================================================ 渲染
     def draw(self):
-        self.screen.fill((32, 36, 44))
+        self.screen.fill(BG)
+        if self.scene == "menu":
+            self._draw_menu()
+        elif self.scene == "difficulty":
+            self._draw_difficulty()
+        elif self.scene == "levels":
+            self._draw_levels()
+        elif self.scene == "settings":
+            self._draw_settings()
+        else:
+            self._draw_play()
+
+    # ---- 通用按钮
+    def _draw_button(self, rect, label, enabled=True, accent=False,
+                     label_font=None, fill=None):
+        font = label_font or self.font
+        if fill is None:
+            fill = BTN_HI if accent else BTN
+        if not enabled:
+            fill = (48, 54, 64)
+            edge = (80, 88, 100)
+        else:
+            edge = (150, 160, 175) if accent else (140, 150, 165)
+        pygame.draw.rect(self.screen, fill, rect, border_radius=10)
+        pygame.draw.rect(self.screen, edge, rect, 2, border_radius=10)
+        color = TEXT if enabled else (110, 118, 130)
+        text = font.render(label, True, color)
+        self.screen.blit(text, text.get_rect(center=rect.center))
+
+    def _draw_menu(self):
+        self._draw_title("方块染色解谜", "Paint Puzzle  ·  染色解谜", 210)
+        tip = self.font_small.render("第 11 关起自动随机生成 · 进度自动保存",
+                                     True, TEXT_DIM)
+        self.screen.blit(tip, tip.get_rect(center=(WINDOW_W // 2, 640)))
+        ver = self.font_small.render(VERSION, True, (110, 118, 130))
+        self.screen.blit(ver, (WINDOW_W - ver.get_width() - 16,
+                               WINDOW_H - ver.get_height() - 12))
+        for key, label, rect, enabled in self._menu_buttons():
+            if key == "continue" and enabled:
+                label = "继续游戏(%s·第%d关)" % (
+                    "简单" if self.save["mode"] == "easy" else "困难",
+                    self.save["level"])
+            elif key == "continue":
+                label = "继续游戏(暂无进度)"
+            self._draw_button(rect, label, enabled, accent=(key == "start"))
+
+    def _draw_title(self, main, sub, y):
+        t = self.font_title.render(main, True, TEXT)
+        self.screen.blit(t, t.get_rect(center=(WINDOW_W // 2, y - 40)))
+        s = self.font.render(sub, True, GOLD)
+        self.screen.blit(s, s.get_rect(center=(WINDOW_W // 2, y + 16)))
+
+    def _draw_difficulty(self):
+        self._draw_button(pygame.Rect(40, 34, 120, 46), "← 返回",
+                          label_font=self.font_small)
+        self._draw_title("选择难度", "想怎么控制颜色?", 190)
+        easy_desc = "自选颜色:先在色板选中颜色,再点行/列画刷染色"
+        hard_desc = "随机笔刷:每支笔刷颜色随机,用后换新,更考验规划"
+        easy, hard, back = None, None, None
+        for key, rect in self._difficulty_buttons():
+            if key == "easy":
+                easy = rect
+            elif key == "hard":
+                hard = rect
+            elif key == "back":
+                back = rect
+        pygame.draw.rect(self.screen, (46, 52, 62), easy, border_radius=12)
+        pygame.draw.rect(self.screen, (90, 160, 110), easy, 2, border_radius=12)
+        l1 = self.font_big.render("简单", True, TEXT)
+        self.screen.blit(l1, l1.get_rect(center=(easy.centerx, easy.top + 52)))
+        d1 = self.font_small.render(easy_desc, True, TEXT_DIM)
+        self.screen.blit(d1, d1.get_rect(center=(easy.centerx, easy.top + 104)))
+        pygame.draw.rect(self.screen, (46, 52, 62), hard, border_radius=12)
+        pygame.draw.rect(self.screen, (230, 120, 110), hard, 2, border_radius=12)
+        l2 = self.font_big.render("困难", True, TEXT)
+        self.screen.blit(l2, l2.get_rect(center=(hard.centerx, hard.top + 52)))
+        d2 = self.font_small.render(hard_desc, True, TEXT_DIM)
+        self.screen.blit(d2, d2.get_rect(center=(hard.centerx, hard.top + 104)))
+        tip = self.font_small.render("两种难度都可通过提示通关", True, GOLD)
+        self.screen.blit(tip, tip.get_rect(center=(WINDOW_W // 2, 520)))
+
+    def _draw_levels(self):
+        self._draw_button(pygame.Rect(40, 34, 120, 46), "← 返回",
+                          label_font=self.font_small)
+        title = self.font_title.render("选择关卡", True, TEXT)
+        self.screen.blit(title, title.get_rect(center=(WINDOW_W // 2, 110)))
+        sub = self.font.render("难度:%s · 第 1~10 关为固定图案"
+                               % self.difficulty_name, True, GOLD)
+        self.screen.blit(sub, sub.get_rect(center=(WINDOW_W // 2, 158)))
+        for key, rect in self._level_buttons():
+            if key == "back":
+                continue
+            num = int(key[2:])
+            self._draw_button(rect, str(num), label_font=self.font_big,
+                              accent=False)
+        note = self.font_small.render(
+            "从第 11 关起:通关后自动生成并进入下一关", True, TEXT_DIM)
+        self.screen.blit(note, note.get_rect(center=(WINDOW_W // 2, 560)))
+
+    def _draw_settings(self):
+        self._draw_title("设置", "音效与玩法说明", 150)
+        self._draw_button(pygame.Rect(40, 34, 120, 46), "← 返回",
+                          label_font=self.font_small)
+        sound_l = self.font.render("音效:", True, TEXT)
+        self.screen.blit(sound_l, (190, 218))
+        self._draw_button(self._sound_rect(),
+                          "开" if self.audio.enabled else "关",
+                          label_font=self.font_big,
+                          accent=self.audio.enabled)
+        y = 320
+        head = self.font_small.render("玩法说明", True, GOLD)
+        self.screen.blit(head, (120, y - 26))
+        for line in HELP_LINES:
+            t = self.font_small.render(line, True, (205, 210, 220))
+            self.screen.blit(t, (120, y))
+            y += 36
+        self._draw_button(self._settings_back_rect(), "返回主菜单")
+
+    # ================================================================ 对局渲染
+    def _draw_play(self):
         self._draw_top_bar()
         self._draw_target()
         self._draw_board()
-        self._draw_palette()
+        if self.mode == "easy":
+            self._draw_palette()
         self._draw_hint_line()
-        for br in self.row_brushes + self.col_brushes:
-            br.draw(self.screen)
+        for br in self.all_brushes:
+            br.draw(self.screen, PALETTE if self.mode == "hard" else None)
         self._draw_hint_brush()
         if self.state == "fail":
             self._draw_fail_overlay()
         elif self.state == "win" and self.win_t > 0.9:
-            self._draw_center_text("通关!点击进入下一关", (255, 230, 120))
+            self._draw_center_text("通关!点击进入下一关", GOLD)
         if self.hint_msg_t > 0 and self.state == "play":
             self._draw_bottom_text(self.hint_msg, (120, 220, 255),
                                    alpha=self.hint_msg_t / HINT_SHOW_SEC)
+        tip = self.font_small.render("ESC 菜单 · Ctrl+Z 撤销", True,
+                                     (110, 118, 130))
+        self.screen.blit(tip, (24, WINDOW_H - tip.get_height() - 14))
 
     def _draw_hint_line(self):
         """提示期间:在建议染色的整行/整列上覆盖脉动高亮。"""
@@ -319,8 +742,8 @@ class Game:
             rect = pygame.Rect(BOARD_X, BOARD_Y + self.hint_brush.index * CELL_SIZE,
                                self.cols * CELL_SIZE, CELL_SIZE)
         else:
-            rect = pygame.Rect(BOARD_X + self.hint_brush.index * CELL_SIZE, BOARD_Y,
-                               CELL_SIZE, self.rows * CELL_SIZE)
+            rect = pygame.Rect(BOARD_X + self.hint_brush.index * CELL_SIZE,
+                               BOARD_Y, CELL_SIZE, self.rows * CELL_SIZE)
         overlay = pygame.Surface(rect.size, pygame.SRCALPHA)
         overlay.fill((255, 255, 255, alpha))
         self.screen.blit(overlay, rect.topleft)
@@ -331,7 +754,8 @@ class Game:
             return
         rect = self.hint_brush.rect.inflate(8, 8)
         alpha = 160 + int(80 * math.sin(self.hint_t * 8))
-        outline = pygame.Surface((rect.width + 8, rect.height + 8), pygame.SRCALPHA)
+        outline = pygame.Surface((rect.width + 8, rect.height + 8),
+                                 pygame.SRCALPHA)
         pygame.draw.rect(outline, (255, 255, 255, alpha),
                          (4, 4, rect.width, rect.height), 4, border_radius=10)
         self.screen.blit(outline, (rect.left - 4, rect.top - 4))
@@ -342,40 +766,37 @@ class Game:
                             pygame.SRCALPHA)
         bg.fill((20, 22, 28, int(210 * alpha)))
         label.set_alpha(int(255 * alpha))
-        pos = (WINDOW_W // 2 - bg.get_width() // 2, WINDOW_H - bg.get_height() - 24)
+        pos = (WINDOW_W // 2 - bg.get_width() // 2, WINDOW_H - bg.get_height() - 42)
         self.screen.blit(bg, pos)
         self.screen.blit(label, label.get_rect(center=(WINDOW_W // 2,
                                                        pos[1] + bg.get_height() // 2)))
 
     def _draw_top_bar(self):
-        self.screen.blit(self.font.render("第 %d 关" % self.level_num,
-                                          True, (240, 240, 240)), (TARGET_BOX_X, 30))
-        color = (255, 90, 90) if self.steps_left <= 3 else (240, 240, 240)
+        self.screen.blit(self.font.render("第 %d 关 · %s" % (self.level_num,
+                                                             self.difficulty_name),
+                                          True, TEXT), (TARGET_BOX_X, 30))
+        color = (255, 90, 90) if self.steps_left <= 3 else TEXT
         self.screen.blit(self.font.render("剩余步数:%d" % self.steps_left,
-                                          True, color), (280, 30))
-        pygame.draw.rect(self.screen, (70, 80, 96), self.retry_rect, border_radius=8)
-        pygame.draw.rect(self.screen, (140, 150, 165), self.retry_rect, 2,
-                         border_radius=8)
-        label = self.font_small.render("重试", True, (240, 240, 240))
-        self.screen.blit(label, label.get_rect(center=self.retry_rect.center))
+                                          True, color), (290, 30))
+        # 撤销按钮:不可用(无记录/动画中/非进行状态)时置灰
+        can_undo = self.scene == "play" and bool(self.undo_stack) \
+            and not self.busy and self.state in ("play", "fail")
+        self._draw_button(self.undo_rect, "撤销", can_undo,
+                          label_font=self.font_small)
         # 提示按钮:次数用完后置灰
         enabled = self.hints_left > 0
-        pygame.draw.rect(self.screen, (70, 80, 96) if enabled else (48, 54, 64),
-                         self.hint_rect, border_radius=8)
-        pygame.draw.rect(self.screen, (140, 150, 165) if enabled else (80, 88, 100),
-                         self.hint_rect, 2, border_radius=8)
-        hint_label = self.font_small.render("提示 ×%d" % self.hints_left, True,
-                                            (120, 220, 255) if enabled
-                                            else (110, 118, 130))
-        self.screen.blit(hint_label, hint_label.get_rect(center=self.hint_rect.center))
+        self._draw_button(self.hint_rect, "提示 ×%d" % self.hints_left, enabled,
+                          accent=enabled, label_font=self.font_small)
+        # 重试按钮
+        self._draw_button(self.retry_rect, "重试", True,
+                          label_font=self.font_small)
 
     def _draw_palette(self):
         """色板:本关可用颜色横排;当前选中色画金圈,其余画细灰边。"""
         for idx, rect in self.palette_rects:
             pygame.draw.rect(self.screen, PALETTE[idx], rect, border_radius=8)
             if idx == self.cur_color:
-                pygame.draw.rect(self.screen, (255, 230, 120), rect, 3,
-                                 border_radius=8)
+                pygame.draw.rect(self.screen, GOLD, rect, 3, border_radius=8)
             else:
                 pygame.draw.rect(self.screen, (70, 70, 70), rect, 2,
                                  border_radius=8)
@@ -385,8 +806,9 @@ class Game:
         cell = min((TARGET_BOX_W - 20) // cols, (TARGET_BOX_W - 20) // rows, 40)
         w, h = cell * cols, cell * rows
         y_center = BOARD_Y + rows * CELL_SIZE // 2
-        box = pygame.Rect(TARGET_BOX_X, y_center - h // 2 - 30, TARGET_BOX_W, h + 60)
-        pygame.draw.rect(self.screen, (46, 52, 62), box, border_radius=10)
+        box = pygame.Rect(TARGET_BOX_X, y_center - h // 2 - 30,
+                          TARGET_BOX_W, h + 60)
+        pygame.draw.rect(self.screen, PANEL, box, border_radius=10)
         pygame.draw.rect(self.screen, (90, 100, 115), box, 2, border_radius=10)
         label = self.font_small.render("目标", True, (200, 205, 215))
         self.screen.blit(label, (TARGET_BOX_X + 10, box.top + 8))
@@ -422,7 +844,7 @@ class Game:
         overlay = pygame.Surface((board_w, board_h), pygame.SRCALPHA)
         overlay.fill((180, 30, 30, 140))
         self.screen.blit(overlay, (BOARD_X, BOARD_Y))
-        self._draw_center_text("步数耗尽,关卡重置…", (255, 120, 120))
+        self._draw_center_text("步数耗尽,可撤销或等待重置…", (255, 120, 120))
 
     def _draw_center_text(self, text, color):
         label = self.font.render(text, True, color)
@@ -443,11 +865,14 @@ def main():
         dt = game.clock.tick(FPS) / 1000.0
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
+                if game.scene == "play":
+                    game._save_progress()
                 running = False
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            elif event.type == pygame.KEYDOWN:
+                if game.on_key(event.key, event.mod):
+                    running = False
+            elif game.handle_event(event):
                 running = False
-            else:
-                game.handle_event(event)
         game.update(dt)
         game.draw()
         pygame.display.flip()
