@@ -94,7 +94,8 @@ HELP_LINES = [
     "提示:剩余每步都可点一次提示,给出最佳下一步,跟提示可通关。",
     "撤销:点\"撤销\"或按 Ctrl+Z 退回上一步;点\"重试\"本关重来。",
     "死局:留白处被染色后无法还原,会提示并自动重试本关。",
-    "难度:简单=色板自选颜色;困难=笔刷随机换色(提示可替你设好)。",
+    "难度:简单=色板自选颜色;困难=笔刷随机换色。",
+    "困难模式:点[改色]进入改色模式,再把色板颜色设给画刷,次数=总步数一半。",
     "进度:ESC 回到主菜单,下次可从\"继续游戏\"接着上次的难度和关卡。",
 ]
 
@@ -138,9 +139,12 @@ class Game:
         self.hint_brush = None  # 提示中的画刷
         self.hint_msg = ""
         self.hint_msg_t = 0.0
-        self.cur_color = 1      # 简单难度:当前选中的染色颜色(色板)
+        self.cur_color = 1      # 当前目标颜色:简单=染色色;困难=改色目标色
         self.palette_rects = []  # [(颜色索引, Rect), ...]
         self.undo_stack = []    # 撤销栈(每次成功染色前压栈)
+        self.recolor_total = 0  # 困难模式:本关可自选笔刷色的次数(总步数一半)
+        self.recolor_left = 0
+        self.arm_recolor = False  # 改色模式开关(开启后点画刷=给它换色)
 
         # 对局数据(进入关卡后填充;主菜单阶段为空)
         self.level_num = 1
@@ -152,10 +156,11 @@ class Game:
         self.row_brushes = []
         self.col_brushes = []
 
-        # 顶栏按钮
-        self.undo_rect = pygame.Rect(556, 26, 104, 40)
-        self.hint_rect = pygame.Rect(670, 26, 110, 40)
-        self.retry_rect = pygame.Rect(800, 26, 110, 40)
+        # 顶栏按钮(宽度按四个排布:撤销/提示/改色/重试)
+        self.undo_rect = pygame.Rect(524, 26, 106, 40)
+        self.hint_rect = pygame.Rect(634, 26, 106, 40)
+        self.recolor_rect = pygame.Rect(744, 26, 106, 40)  # 困难模式:自选笔刷色
+        self.retry_rect = pygame.Rect(854, 26, 106, 40)
 
     # ================================================================ 存档
     def _read_save(self):
@@ -254,6 +259,13 @@ class Game:
             self.palette_rects.append(
                 (idx, pygame.Rect(x, PALETTE_Y, PALETTE_CHIP, PALETTE_CHIP)))
             x += PALETTE_CHIP + PALETTE_GAP
+        # 困难模式:自选笔刷色次数 = 总步数的一半(每关重新计算)
+        if self.mode == "hard":
+            self.recolor_total = max(1, self.max_steps // 2)
+        else:
+            self.recolor_total = 0
+        self.recolor_left = self.recolor_total
+        self.arm_recolor = False
         self.steps_used = 0
         self.state = "play"
         self.win_t = 0.0
@@ -324,8 +336,13 @@ class Game:
             self.use_hint()
         elif self.undo_rect.collidepoint(pos):
             self.undo()
-        elif self.mode == "easy":
-            for idx, rect in self.palette_rects:   # 色板:切换当前染色色
+        elif self.mode == "hard" and self.recolor_rect.collidepoint(pos) \
+                and self.state == "play" and self.recolor_left > 0:
+            # 困难模式:切换"改色模式"(点画刷=把色板颜色设给它)
+            self.arm_recolor = not self.arm_recolor
+            self.audio.play("click")
+        else:
+            for idx, rect in self.palette_rects:   # 色板:切换当前颜色
                 if rect.collidepoint(pos):
                     if idx != self.cur_color:
                         self.cur_color = idx
@@ -333,12 +350,10 @@ class Game:
                     return False
             for brush in self.all_brushes:
                 if brush.hit(pos):
-                    self.paint(brush)
-                    return False
-        else:
-            for brush in self.all_brushes:
-                if brush.hit(pos):
-                    self.paint(brush)
+                    if self.mode == "hard" and self.arm_recolor:
+                        self.recolor_brush(brush)
+                    else:
+                        self.paint(brush)
                     return False
         return False
 
@@ -459,6 +474,29 @@ class Game:
         self.steps_used += 1
         if self.mode == "hard":
             brush.reroll(self.num_colors)
+
+    def recolor_brush(self, brush):
+        """困难模式:把一支画刷的颜色改成色板当前选中的颜色。
+
+        需先开启"改色模式";每次成功换色消耗 1 次自选次数(总步数的一半),
+        不消耗染色步数。颜色相同则不消耗并提示。
+        """
+        if self.mode != "hard" or self.state != "play" or not self.arm_recolor:
+            return
+        if self.recolor_left <= 0:
+            self.arm_recolor = False
+            return
+        if brush.color == self.cur_color:
+            self.hint_msg = "该画刷已是这个颜色"
+            self.hint_msg_t = 1.2
+            return
+        brush.color = self.cur_color
+        brush.press()
+        brush.flash()
+        self.audio.play("click")
+        self.recolor_left -= 1
+        if self.recolor_left <= 0:
+            self.arm_recolor = False
 
     # ---- 撤销
     def _snapshot(self):
@@ -736,8 +774,7 @@ class Game:
         self._draw_top_bar()
         self._draw_target()
         self._draw_board()
-        if self.mode == "easy":
-            self._draw_palette()
+        self._draw_palette()   # 简单:选染色色;困难:选改色目标色
         self._draw_hint_line()
         for br in self.all_brushes:
             br.draw(self.screen, PALETTE if self.mode == "hard" else None)
@@ -746,11 +783,16 @@ class Game:
             self._draw_fail_overlay()
         elif self.state == "win" and self.win_t > 0.9:
             self._draw_center_text("通关!点击进入下一关", GOLD)
-        if self.hint_msg_t > 0 and self.state == "play":
+        if self.arm_recolor and self.state == "play":
+            self._draw_bottom_text(
+                "改色模式:点一支画刷,换成色板选中的颜色(剩 %d 次)"
+                % self.recolor_left, (255, 220, 150))
+        elif self.hint_msg_t > 0 and self.state == "play":
             self._draw_bottom_text(self.hint_msg, (120, 220, 255),
                                    alpha=self.hint_msg_t / HINT_SHOW_SEC)
-        tip = self.font_small.render("ESC 菜单 · Ctrl+Z 撤销", True,
-                                     (110, 118, 130))
+        tip = self.font_small.render(
+            "ESC 菜单 · Ctrl+Z 撤销 · 困难可用[改色]自选笔刷色", True,
+            (110, 118, 130))
         self.screen.blit(tip, (24, WINDOW_H - tip.get_height() - 14))
 
     def _draw_hint_line(self):
@@ -804,9 +846,16 @@ class Game:
         self._draw_button(self.undo_rect, "撤销", can_undo,
                           label_font=self.font_small)
         # 提示按钮:次数用完后置灰
-        enabled = self.hints_left > 0
-        self._draw_button(self.hint_rect, "提示 ×%d" % self.hints_left, enabled,
-                          accent=enabled, label_font=self.font_small)
+        enabled_hint = self.hints_left > 0
+        self._draw_button(self.hint_rect, "提示 ×%d" % self.hints_left,
+                          enabled_hint, accent=enabled_hint,
+                          label_font=self.font_small)
+        # 困难模式:自选笔刷色按钮
+        if self.mode == "hard":
+            can_sel = self.recolor_left > 0
+            self._draw_button(self.recolor_rect,
+                              "改色 ×%d" % self.recolor_left, can_sel,
+                              accent=self.arm_recolor, label_font=self.font_small)
         # 重试按钮
         self._draw_button(self.retry_rect, "重试", True,
                           label_font=self.font_small)

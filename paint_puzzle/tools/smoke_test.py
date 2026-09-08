@@ -425,6 +425,35 @@ def test_scene_flow():
     pygame_quit(game)
 
 
+def test_hard_recolor_brush():
+    """困难模式自选笔刷色:次数=总步数一半;[改色]把色板颜色设给画刷。"""
+    game = game_mod.Game()
+    game.mode = "hard"
+    game._load_level(1)
+    expect = max(1, game.max_steps // 2)
+    check("recolor: quota is half of total steps",
+          game.recolor_total == expect and game.recolor_left == expect)
+    brush = game.row_brushes[0]
+    steps0 = game.steps_used
+    # 点[改色]按钮进入改色模式
+    game.handle_event(make_click(game.recolor_rect.center))
+    check("recolor: arm via button", game.arm_recolor)
+    # 连续把画刷改成与当前不同的颜色,直到次数用尽自动解除
+    guard = 0
+    while game.recolor_left > 0 and game.arm_recolor and guard < 100:
+        game.cur_color = (brush.color % game.num_colors) + 1  # 保证不同
+        game.handle_event(make_click(brush.rect.center))
+        guard += 1
+    check("recolor: uses up quota and unarms",
+          game.recolor_left == 0 and not game.arm_recolor)
+    check("recolor: does not consume paint steps", game.steps_used == steps0)
+    # 次数用完后按钮点击不再进入改色模式
+    game.cur_color = 1
+    game.handle_event(make_click(game.recolor_rect.center))
+    check("recolor: button inert when quota empty", not game.arm_recolor)
+    pygame_quit(game)
+
+
 def make_click(pos):
     e = pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": pos})
     return e
@@ -448,6 +477,7 @@ def main():
     test_dead_end_auto_reset()
     test_undo_easy()
     test_hard_mode_brush_color_and_undo()
+    test_hard_recolor_brush()
     cleanup_save()   # 前面测试可能写过进度,先清掉再验证"继续游戏"禁用态
     test_scene_flow()
     cleanup_save()
