@@ -128,7 +128,7 @@ class Game:
         self.screen = pygame.Surface((WINDOW_W, WINDOW_H))
         self.fullscreen = False
         self.window_size = (WINDOW_W, WINDOW_H)
-        pygame.display.set_caption("方块染色解谜  [F11] 全屏/窗口 · 可拖动缩放")
+        pygame.display.set_caption("方块染色解谜")
         self._set_window_icon()
         self.clock = pygame.time.Clock()
         self.font = make_font(28)
@@ -723,12 +723,16 @@ class Game:
         self._present()
 
     def _present(self):
-        """把 960x720 逻辑画布等比缩放到窗口并显示(居中,留边填充黑色)。"""
+        """把 960x720 逻辑画布平滑缩放到窗口并显示(居中,留边填充黑色)。
+
+        用 smoothscale(双线性)代替最近邻放大,可消除非整数缩放时
+        小文字的锯齿/摩尔纹重叠,文字更清楚;大窗口下略柔和但均匀。
+        """
         w, h = self._display_size()
         scale = min(w / WINDOW_W, h / WINDOW_H)
         sw, sh = max(1, int(WINDOW_W * scale)), max(1, int(WINDOW_H * scale))
         self._display.fill((0, 0, 0))
-        self._display.blit(pygame.transform.scale(self.screen, (sw, sh)),
+        self._display.blit(pygame.transform.smoothscale(self.screen, (sw, sh)),
                            ((w - sw) // 2, (h - sh) // 2))
         pygame.display.flip()
 
