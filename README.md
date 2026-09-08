@@ -2,6 +2,8 @@
 
 **方块染色解谜** · A strategy color-painting puzzle game built with **Python + pygame**.
 
+> **[English](README.md)** · **[中文](README.zh-CN.md)**
+
 Paint one whole row or column at a time. Later strokes overwrite earlier ones, so you have to think backwards to reproduce the target pattern within a limited number of moves.
 
 ![icon](paint_puzzle/icon.png)
