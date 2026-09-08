@@ -9,9 +9,10 @@ __pycache__/
 paint_puzzle/save.json
 paint_puzzle/启动错误.log
 
-# PyInstaller 打包产物
+# PyInstaller / Inno 打包产物
 paint_puzzle/build/
 paint_puzzle/dist/
+paint_puzzle/installer_out/
 paint_puzzle/*.spec
 
 # 编辑器/系统
