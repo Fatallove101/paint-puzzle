@@ -622,6 +622,28 @@ class Game:
         text = font.render(label, True, color)
         self.screen.blit(text, text.get_rect(center=rect.center))
 
+    def _draw_wrapped(self, text, box, y_start):
+        """把说明文字按 box 宽度自动折行,从 y_start 起逐行居中绘制。"""
+        font = self.font_small
+        max_w = box.width - 24
+        lines = []
+        cur = ""
+        for ch in text:
+            if font.size(cur + ch)[0] <= max_w:
+                cur += ch
+            else:
+                if cur:
+                    lines.append(cur)
+                cur = ch
+        if cur:
+            lines.append(cur)
+        y = y_start
+        for line in lines:
+            surf = font.render(line, True, TEXT_DIM)
+            self.screen.blit(surf, surf.get_rect(center=(box.centerx, y)))
+            y += surf.get_height() + 4
+        return y
+
     def _draw_menu(self):
         self._draw_title("方块染色解谜", "Paint Puzzle  ·  染色解谜", 210)
         tip = self.font_small.render("第 11 关起自动随机生成 · 进度自动保存",
@@ -662,15 +684,13 @@ class Game:
         pygame.draw.rect(self.screen, (46, 52, 62), easy, border_radius=12)
         pygame.draw.rect(self.screen, (90, 160, 110), easy, 2, border_radius=12)
         l1 = self.font_big.render("简单", True, TEXT)
-        self.screen.blit(l1, l1.get_rect(center=(easy.centerx, easy.top + 52)))
-        d1 = self.font_small.render(easy_desc, True, TEXT_DIM)
-        self.screen.blit(d1, d1.get_rect(center=(easy.centerx, easy.top + 104)))
+        self.screen.blit(l1, l1.get_rect(center=(easy.centerx, easy.top + 46)))
+        self._draw_wrapped(easy_desc, easy, easy.top + 100)
         pygame.draw.rect(self.screen, (46, 52, 62), hard, border_radius=12)
         pygame.draw.rect(self.screen, (230, 120, 110), hard, 2, border_radius=12)
         l2 = self.font_big.render("困难", True, TEXT)
-        self.screen.blit(l2, l2.get_rect(center=(hard.centerx, hard.top + 52)))
-        d2 = self.font_small.render(hard_desc, True, TEXT_DIM)
-        self.screen.blit(d2, d2.get_rect(center=(hard.centerx, hard.top + 104)))
+        self.screen.blit(l2, l2.get_rect(center=(hard.centerx, hard.top + 46)))
+        self._draw_wrapped(hard_desc, hard, hard.top + 100)
         tip = self.font_small.render("两种难度都可通过提示通关", True, GOLD)
         self.screen.blit(tip, tip.get_rect(center=(WINDOW_W // 2, 520)))
 
