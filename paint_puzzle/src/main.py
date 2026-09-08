@@ -95,7 +95,7 @@ HELP_LINES = [
     "撤销:点\"撤销\"或按 Ctrl+Z 退回上一步;点\"重试\"本关重来。",
     "死局:留白处被染色后无法还原,会提示并自动重试本关。",
     "难度:简单=色板自选颜色;困难=笔刷随机换色。",
-    "困难模式:点[改色]进入改色模式,再把色板颜色设给画刷,次数=总步数一半。",
+    "困难模式:点[改色]会在其下方弹出颜色,先选色再点画刷换色,次数=总步数一半。",
     "进度:ESC 回到主菜单,下次可从\"继续游戏\"接着上次的难度和关卡。",
 ]
 
@@ -342,12 +342,22 @@ class Game:
             self.arm_recolor = not self.arm_recolor
             self.audio.play("click")
         else:
-            for idx, rect in self.palette_rects:   # 色板:切换当前颜色
-                if rect.collidepoint(pos):
-                    if idx != self.cur_color:
-                        self.cur_color = idx
-                        self.audio.play("click")
-                    return False
+            if self.mode == "easy":
+                # 简单:顶部横排色板 = 当前染色色
+                for idx, rect in self.palette_rects:
+                    if rect.collidepoint(pos):
+                        if idx != self.cur_color:
+                            self.cur_color = idx
+                            self.audio.play("click")
+                        return False
+            elif self.arm_recolor:
+                # 困难:改色模式下,改色按钮下方的竖排色块 = 换色目标色
+                for idx, rect in self._recolor_rects():
+                    if rect.collidepoint(pos):
+                        if idx != self.cur_color:
+                            self.cur_color = idx
+                            self.audio.play("click")
+                        return False
             for brush in self.all_brushes:
                 if brush.hit(pos):
                     if self.mode == "hard" and self.arm_recolor:
@@ -774,7 +784,10 @@ class Game:
         self._draw_top_bar()
         self._draw_target()
         self._draw_board()
-        self._draw_palette()   # 简单:选染色色;困难:选改色目标色
+        if self.mode == "easy":
+            self._draw_palette()          # 简单:顶部横排选染色色
+        elif self.arm_recolor:
+            self._draw_recolor_popup()    # 困难:改色按钮下方的竖排选色
         self._draw_hint_line()
         for br in self.all_brushes:
             br.draw(self.screen, PALETTE if self.mode == "hard" else None)
@@ -860,8 +873,39 @@ class Game:
         self._draw_button(self.retry_rect, "重试", True,
                           label_font=self.font_small)
 
+    def _recolor_rects(self):
+        """困难模式改色弹层:改色按钮下方竖排的颜色块(避开棋盘右侧)。"""
+        chip, gap = 36, 8
+        x = 792                     # 保证不压到最大棋盘(右缘 <= 778)
+        y = 84
+        out = []
+        for idx in range(1, self.num_colors + 1):
+            out.append((idx, pygame.Rect(x, y, chip, chip)))
+            y += chip + gap
+        return out
+
+    def _draw_recolor_popup(self):
+        """在[改色]按钮下方画竖排颜色块;当前选中色画金圈。"""
+        rects = self._recolor_rects()
+        n = len(rects)
+        if n == 0:
+            return
+        top = rects[0][1].top - 10
+        bottom = rects[-1][1].bottom + 10
+        panel = pygame.Rect(782, top, 56, bottom - top)
+        pygame.draw.rect(self.screen, PANEL, panel, border_radius=10)
+        pygame.draw.rect(self.screen, (140, 150, 165), panel, 2,
+                         border_radius=10)
+        for idx, rect in rects:
+            pygame.draw.rect(self.screen, PALETTE[idx], rect, border_radius=8)
+            if idx == self.cur_color:
+                pygame.draw.rect(self.screen, GOLD, rect, 3, border_radius=8)
+            else:
+                pygame.draw.rect(self.screen, (70, 70, 70), rect, 2,
+                                 border_radius=8)
+
     def _draw_palette(self):
-        """色板:本关可用颜色横排;当前选中色画金圈,其余画细灰边。"""
+        """色板(简单难度):本关可用颜色横排;当前选中色画金圈,其余细灰边。"""
         for idx, rect in self.palette_rects:
             pygame.draw.rect(self.screen, PALETTE[idx], rect, border_radius=8)
             if idx == self.cur_color:
