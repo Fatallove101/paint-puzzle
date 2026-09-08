@@ -489,7 +489,8 @@ class Game:
         """困难模式:把一支画刷的颜色改成色板当前选中的颜色。
 
         需先开启"改色模式";每次成功换色消耗 1 次自选次数(总步数的一半),
-        不消耗染色步数。颜色相同则不消耗并提示。
+        不消耗染色步数。换色成功后**自动收起**改色弹层,防止连点误耗次数;
+        需要再改时重新点[改色]即可。颜色相同则不消耗并提示。
         """
         if self.mode != "hard" or self.state != "play" or not self.arm_recolor:
             return
@@ -505,8 +506,12 @@ class Game:
         brush.flash()
         self.audio.play("click")
         self.recolor_left -= 1
-        if self.recolor_left <= 0:
-            self.arm_recolor = False
+        self.arm_recolor = False   # 一次一用,自动收起,防误触
+        if self.recolor_left > 0:
+            self.hint_msg = "已换色,剩余 %d 次(再点[改色]继续)" % self.recolor_left
+        else:
+            self.hint_msg = "改色次数已用完"
+        self.hint_msg_t = 1.6
 
     # ---- 撤销
     def _snapshot(self):

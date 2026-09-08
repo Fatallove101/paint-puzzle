@@ -426,7 +426,7 @@ def test_scene_flow():
 
 
 def test_hard_recolor_brush():
-    """困难模式自选笔刷色:次数=总步数一半;[改色]把色板颜色设给画刷。"""
+    """困难模式自选笔刷色:次数=总步数一半;换一次自动收起,防连点误耗。"""
     game = game_mod.Game()
     game.mode = "hard"
     game._load_level(1)
@@ -435,18 +435,28 @@ def test_hard_recolor_brush():
           game.recolor_total == expect and game.recolor_left == expect)
     brush = game.row_brushes[0]
     steps0 = game.steps_used
-    # 点[改色]按钮进入改色模式
+    # 开启改色模式
     game.handle_event(make_click(game.recolor_rect.center))
     check("recolor: arm via button", game.arm_recolor)
-    # 连续把画刷改成与当前不同的颜色,直到次数用尽自动解除
+    # 换一次色:应消耗 1 次并自动收起(arm 复位)
+    game.cur_color = (brush.color % game.num_colors) + 1  # 保证不同
+    game.handle_event(make_click(brush.rect.center))
+    check("recolor: one use auto-unarms", not game.arm_recolor
+          and game.recolor_left == expect - 1)
+    # 收起后直接点画刷应是染色而不是换色
+    before = game.steps_used
+    game.handle_event(make_click(brush.rect.center))
+    check("recolor: unarmed brush click paints instead",
+          game.steps_used == before + 1)
+    # 重新开启并逐次换色,直到次数用尽(每次都需重新点[改色])
     guard = 0
-    while game.recolor_left > 0 and game.arm_recolor and guard < 100:
-        game.cur_color = (brush.color % game.num_colors) + 1  # 保证不同
+    while game.recolor_left > 0 and guard < 200:
+        game.cur_color = (brush.color % game.num_colors) + 1
+        game.handle_event(make_click(game.recolor_rect.center))  # 重新开启
         game.handle_event(make_click(brush.rect.center))
         guard += 1
-    check("recolor: uses up quota and unarms",
+    check("recolor: quota exhausted and unarmed",
           game.recolor_left == 0 and not game.arm_recolor)
-    check("recolor: does not consume paint steps", game.steps_used == steps0)
     # 次数用完后按钮点击不再进入改色模式
     game.cur_color = 1
     game.handle_event(make_click(game.recolor_rect.center))
