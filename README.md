@@ -4,6 +4,8 @@
 
 > **[English](README.md)** · **[中文](README.zh-CN.md)**
 
+> **⬇️ Download the Windows installer:** [paint-puzzle **v2.3**](https://github.com/Fatallove101/paint-puzzle/releases/latest) · `PaintPuzzle-Setup.exe`
+
 Paint one whole row or column at a time. Later strokes overwrite earlier ones, so you have to think backwards to reproduce the target pattern within a limited number of moves.
 
 ![icon](paint_puzzle/icon.png)

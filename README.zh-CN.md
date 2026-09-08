@@ -8,6 +8,8 @@
 
 > **[English](README.md)** · **中文**
 
+> **⬇️ 下载 Windows 安装包:**[方块染色解谜 **v2.3**](https://github.com/Fatallove101/paint-puzzle/releases/latest) · `PaintPuzzle-Setup.exe`
+
 ## 特性
 
 - **主菜单**:**继续游戏**(自动保存进度)、**设置**(音效开关)、**退出游戏**
