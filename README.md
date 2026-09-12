@@ -8,7 +8,7 @@
 
 | Platform | File | Release |
 |---|---|---|
-| **Windows** (Python + pygame) | `PaintPuzzle-Setup.exe` | [v2.3](https://github.com/Fatallove101/paint-puzzle/releases/tag/v2.3) |
+| **Windows** (Python + pygame) | `PaintPuzzle-Setup-v2.4.exe` | [v2.4-win](https://github.com/Fatallove101/paint-puzzle/releases/tag/v2.4-win) |
 | **Android** (Godot 4 port) | `PaintPuzzle-Android-v2.4.0.apk` | [v2.4.0-android](https://github.com/Fatallove101/paint-puzzle/releases/tag/v2.4.0-android) |
 
 Two editions share the same puzzle rules: the original **Python + pygame** desktop game (`paint_puzzle/`) and a **Godot 4 touch port for Android** (`paint_puzzle_godot/`).

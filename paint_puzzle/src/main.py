@@ -32,7 +32,7 @@ CELL_SIZE = 64          # 方块边长(像素)
 PAINT_DELAY = 0.04      # 相邻方块染色的错峰间隔(秒)
 PAINT_DUR = 0.18        # 单个方块染色渐变时长(秒)
 HINT_SHOW_SEC = 4.0     # 提示高亮与文案的显示时长(秒)
-VERSION = "v2.0"
+VERSION = "v2.4"
 
 # 存档路径:开发时在项目根 save.json;打包成 exe 后放在 exe 同目录(不入 git)
 def _save_path():
@@ -133,6 +133,7 @@ class Game:
         self.clock = pygame.time.Clock()
         self.font = make_font(28)
         self.font_small = make_font(22)
+        self.font_bar = make_font(19)   # 顶栏小按钮用的更小字号
         self.font_title = make_font(58)
         self.font_big = make_font(36)
         self.audio = Audio()
@@ -159,6 +160,11 @@ class Game:
         self.recolor_total = 0  # 困难模式:本关可自选笔刷色的次数(总步数一半)
         self.recolor_left = 0
         self.arm_recolor = False  # 改色模式开关(开启后点画刷=给它换色)
+        self.refresh_total = 0  # 困难模式:本关可"刷色"的次数(颜色数×2,最低 3)
+        self.refresh_left = 0
+        self.arm_refresh = False  # 刷色模式开关(开启后点画刷=重随颜色,不落子)
+        self.confirm_quit = False   # 退出确认弹窗是否显示
+        self.quit_requested = False  # 用户已确认退出
 
         # 对局数据(进入关卡后填充;主菜单阶段为空)
         self.level_num = 1
@@ -170,11 +176,12 @@ class Game:
         self.row_brushes = []
         self.col_brushes = []
 
-        # 顶栏按钮(宽度按四个排布:撤销/提示/改色/重试)
-        self.undo_rect = pygame.Rect(524, 26, 106, 40)
-        self.hint_rect = pygame.Rect(634, 26, 106, 40)
-        self.recolor_rect = pygame.Rect(744, 26, 106, 40)  # 困难模式:自选笔刷色
-        self.retry_rect = pygame.Rect(854, 26, 106, 40)
+        # 顶栏按钮(5 个:撤销/提示/刷色/改色/重试,宽 86 间距 4)
+        self.undo_rect = pygame.Rect(500, 26, 86, 40)
+        self.hint_rect = pygame.Rect(590, 26, 86, 40)
+        self.refresh_rect = pygame.Rect(680, 26, 86, 40)   # 困难模式:刷色
+        self.recolor_rect = pygame.Rect(770, 26, 86, 40)   # 困难模式:自选笔刷色
+        self.retry_rect = pygame.Rect(860, 26, 86, 40)
 
     # ================================================================ 存档
     def _read_save(self):
@@ -269,16 +276,15 @@ class Game:
         for r in range(self.rows):
             rect = pygame.Rect(BOARD_X - BRUSH_W - 8, BOARD_Y + r * CELL_SIZE + 2,
                                BRUSH_W, CELL_SIZE - 4)
-            color = self.rng.randint(1, self.num_colors) \
-                if self.mode == "hard" else None
+            color = self._fair_color() if self.mode == "hard" else None
             self.row_brushes.append(Brush("row", r, rect, color))
         for c in range(self.cols):
             rect = pygame.Rect(BOARD_X + c * CELL_SIZE + 2,
                                BOARD_Y + self.rows * CELL_SIZE + 8,
                                CELL_SIZE - 4, BRUSH_W)
-            color = self.rng.randint(1, self.num_colors) \
-                if self.mode == "hard" else None
+            color = self._fair_color() if self.mode == "hard" else None
             self.col_brushes.append(Brush("col", c, rect, color))
+        self._ensure_needed_present()
         # 色板(简单难度):本关可用颜色 1..num_colors 横排居中
         if not (1 <= self.cur_color <= self.num_colors):
             self.cur_color = 1
@@ -290,13 +296,17 @@ class Game:
             self.palette_rects.append(
                 (idx, pygame.Rect(x, PALETTE_Y, PALETTE_CHIP, PALETTE_CHIP)))
             x += PALETTE_CHIP + PALETTE_GAP
-        # 困难模式:自选笔刷色次数 = 总步数的一半(每关重新计算)
+        # 困难模式:改色次数 = 总步数一半;刷色次数 = 颜色数×2(最低 3 次)
         if self.mode == "hard":
             self.recolor_total = max(1, self.max_steps // 2)
+            self.refresh_total = max(3, self.num_colors * 2)
         else:
             self.recolor_total = 0
+            self.refresh_total = 0
         self.recolor_left = self.recolor_total
+        self.refresh_left = self.refresh_total
         self.arm_recolor = False
+        self.arm_refresh = False
         self.steps_used = 0
         self.state = "play"
         self.win_t = 0.0
@@ -342,6 +352,15 @@ class Game:
         if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
             return False
         pos = self._to_logical(event.pos)
+        # 退出确认弹窗优先处理(拦截其它点击)
+        if self.confirm_quit:
+            yes, no = self._confirm_rects()
+            if yes.collidepoint(pos):
+                self.confirm_quit = False
+                self.quit_requested = True
+            elif no.collidepoint(pos):
+                self.confirm_quit = False
+            return False
         if self.scene == "menu":
             return self._handle_menu(pos)
         if self.scene == "difficulty":
@@ -367,10 +386,21 @@ class Game:
             self.use_hint()
         elif self.undo_rect.collidepoint(pos):
             self.undo()
+        elif self.mode == "hard" and self.refresh_rect.collidepoint(pos) \
+                and self.state == "play" and self.refresh_left > 0:
+            # 困难模式:切换"刷色模式"(点画刷=重随该画刷颜色,不消耗步数)
+            self.arm_refresh = not self.arm_refresh
+            if self.arm_refresh:
+                self.arm_recolor = False
+                self.hint_msg = "刷色模式:点一支画刷,让它重新随机颜色(不消耗步数)"
+                self.hint_msg_t = 2.5
+            self.audio.play("click")
         elif self.mode == "hard" and self.recolor_rect.collidepoint(pos) \
                 and self.state == "play" and self.recolor_left > 0:
             # 困难模式:切换"改色模式"(点画刷=把色板颜色设给它)
             self.arm_recolor = not self.arm_recolor
+            if self.arm_recolor:
+                self.arm_refresh = False
             self.audio.play("click")
         else:
             if self.mode == "easy":
@@ -391,7 +421,9 @@ class Game:
                         return False
             for brush in self.all_brushes:
                 if brush.hit(pos):
-                    if self.mode == "hard" and self.arm_recolor:
+                    if self.mode == "hard" and self.arm_refresh:
+                        self.refresh_brush(brush)
+                    elif self.mode == "hard" and self.arm_recolor:
                         self.recolor_brush(brush)
                     else:
                         self.paint(brush)
@@ -423,8 +455,7 @@ class Game:
                 elif key == "settings":
                     self.scene = "settings"
                 elif key == "exit":
-                    self._save_progress()
-                    return True
+                    self.request_quit()
                 return False
         return False
 
@@ -514,7 +545,7 @@ class Game:
                             palette=PALETTE)
         self.steps_used += 1
         if self.mode == "hard":
-            brush.reroll(self.num_colors)
+            self._fair_reroll(brush)
 
     def recolor_brush(self, brush):
         """困难模式:把一支画刷的颜色改成色板当前选中的颜色。
@@ -583,6 +614,99 @@ class Game:
         for b in self.blocks:
             board[b.row][b.col] = b.color
         return board
+
+    # ---- 困难模式:公平随机(只抽"当前仍需要的颜色")
+    @staticmethod
+    def _apply_op(board, op):
+        orient, i, c = op
+        if orient == "row":
+            board[i] = [c] * len(board[i])
+        else:
+            for r in range(len(board)):
+                board[r][i] = c
+
+    def _needed_colors(self):
+        """当前局面下仍需要的颜色集合(来自反推求解器的剩余步骤)。"""
+        ops = self.solution
+        n = len(ops)
+        best = -1
+        board = self._board_colors()
+        for k in range(n + 1):
+            b = [row[:] for row in board]
+            for op in ops[k:]:
+                self._apply_op(b, op)
+            if b == self.target:
+                best = k
+        if best < 0:
+            return set()
+        return {op[2] for op in ops[best:]}
+
+    def _fair_pool(self, exclude):
+        pool = sorted(c for c in self._needed_colors() if c != exclude)
+        if pool:
+            return pool
+        return [c for c in range(1, self.num_colors + 1) if c != exclude]
+
+    def _fair_color(self):
+        pool = sorted(self._needed_colors())
+        if not pool:
+            return self.rng.randint(1, self.num_colors)
+        return self.rng.choice(pool)
+
+    def _ensure_needed_present(self):
+        """保证"仍需要的每种颜色"至少出现在一支画刷上,避免运气死局。"""
+        if self.mode != "hard":
+            return
+        need = self._needed_colors()
+        brushes = self.all_brushes
+        if not need or len(brushes) < len(need):
+            return
+        present = {br.color for br in brushes}
+        for c in sorted(need):
+            if c in present:
+                continue
+            target = None
+            for br in brushes:
+                if br.color not in need:
+                    target = br
+                    break
+            if target is None:
+                target = brushes[0]
+            target.color = c
+            present.add(c)
+
+    def _fair_reroll(self, brush):
+        pool = self._fair_pool(brush.color)
+        if not pool:
+            return
+        brush.color = self.rng.choice(pool)
+        brush.flash()
+
+    def refresh_brush(self, brush):
+        """困难模式"刷色":重随某支画刷的颜色,不落子、不消耗步数。
+
+        交换 1 次刷色次数;一次一用(自动收起),避免连点误耗。
+        """
+        if self.mode != "hard" or self.state != "play" or not self.arm_refresh:
+            return False
+        if self.refresh_left <= 0:
+            self.arm_refresh = False
+            return False
+        pool = self._fair_pool(brush.color)
+        if not pool:
+            return False
+        brush.color = self.rng.choice(pool)
+        brush.press()
+        brush.flash()
+        self.audio.play("click")
+        self.refresh_left -= 1
+        self.arm_refresh = False
+        if self.refresh_left > 0:
+            self.hint_msg = "已刷色,剩余 %d 次(再点[刷色]继续)" % self.refresh_left
+        else:
+            self.hint_msg = "刷色次数已用完"
+        self.hint_msg_t = 1.6
+        return True
 
     def use_hint(self):
         """提示:反推求解器给出下一步(染哪一行/列 + 所需颜色)。
@@ -662,6 +786,9 @@ class Game:
         if key == pygame.K_F11:
             self.toggle_fullscreen()
         elif key == pygame.K_ESCAPE:
+            if self.confirm_quit:      # 确认弹窗中按 ESC = 取消
+                self.confirm_quit = False
+                return False
             if self.scene == "play":
                 self._to_menu()
             elif self.scene == "difficulty":
@@ -671,8 +798,7 @@ class Game:
             elif self.scene == "settings":
                 self.scene = "menu"
             elif self.scene == "menu":
-                self._save_progress()
-                return True
+                self.request_quit()
         elif key == pygame.K_z and (mods & pygame.KMOD_CTRL):
             self.undo()
         return False
@@ -720,6 +846,8 @@ class Game:
             self._draw_settings()
         else:
             self._draw_play()
+        if self.confirm_quit:
+            self._draw_confirm()
         self._present()
 
     def _present(self):
@@ -735,6 +863,34 @@ class Game:
         self._display.blit(pygame.transform.smoothscale(self.screen, (sw, sh)),
                            ((w - sw) // 2, (h - sh) // 2))
         pygame.display.flip()
+
+    # ---- 退出确认弹窗
+    def request_quit(self):
+        """请求退出:先弹确认框(窗口关闭按钮 / 菜单"退出游戏" / 主菜单按 ESC)。"""
+        self.confirm_quit = True
+
+    def _confirm_rects(self):
+        yes = pygame.Rect(WINDOW_W // 2 - 190, 424, 170, 52)
+        no = pygame.Rect(WINDOW_W // 2 + 20, 424, 170, 52)
+        return yes, no
+
+    def _draw_confirm(self):
+        overlay = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 160))
+        self.screen.blit(overlay, (0, 0))
+        panel = pygame.Rect(WINDOW_W // 2 - 260, 300, 520, 200)
+        pygame.draw.rect(self.screen, PANEL, panel, border_radius=14)
+        pygame.draw.rect(self.screen, (150, 160, 175), panel, 2,
+                         border_radius=14)
+        title = self.font.render("退出游戏", True, TEXT)
+        self.screen.blit(title, title.get_rect(center=(WINDOW_W // 2, 344)))
+        body = self.font_small.render("确定要退出游戏吗?当前进度已自动保存。",
+                                      True, TEXT_DIM)
+        self.screen.blit(body, body.get_rect(center=(WINDOW_W // 2, 388)))
+        yes, no = self._confirm_rects()
+        self._draw_button(yes, "退出游戏", True, accent=True,
+                          label_font=self.font_small)
+        self._draw_button(no, "取消", True, label_font=self.font_small)
 
     # ---- 通用按钮
     def _draw_button(self, rect, label, enabled=True, accent=False,
@@ -940,21 +1096,27 @@ class Game:
         can_undo = self.scene == "play" and bool(self.undo_stack) \
             and not self.busy and self.state in ("play", "fail")
         self._draw_button(self.undo_rect, "撤销", can_undo,
-                          label_font=self.font_small)
+                          label_font=self.font_bar)
         # 提示按钮:次数用完后置灰
         enabled_hint = self.hints_left > 0
         self._draw_button(self.hint_rect, "提示 ×%d" % self.hints_left,
                           enabled_hint, accent=enabled_hint,
-                          label_font=self.font_small)
-        # 困难模式:自选笔刷色按钮
+                          label_font=self.font_bar)
+        # 困难模式:刷色(重随笔刷颜色,不落子)与改色(指定颜色)
         if self.mode == "hard":
-            can_sel = self.recolor_left > 0
+            can_ref = self.refresh_left > 0 and self.state == "play"
+            self._draw_button(self.refresh_rect,
+                              "刷色 ×%d" % self.refresh_left, can_ref,
+                              accent=self.arm_refresh,
+                              label_font=self.font_bar)
+            can_sel = self.recolor_left > 0 and self.state == "play"
             self._draw_button(self.recolor_rect,
                               "改色 ×%d" % self.recolor_left, can_sel,
-                              accent=self.arm_recolor, label_font=self.font_small)
+                              accent=self.arm_recolor,
+                              label_font=self.font_bar)
         # 重试按钮
         self._draw_button(self.retry_rect, "重试", True,
-                          label_font=self.font_small)
+                          label_font=self.font_bar)
 
     def _recolor_rects(self):
         """困难模式改色弹层:改色按钮下方竖排的颜色块(避开棋盘右侧)。"""
@@ -1061,9 +1223,7 @@ def main():
         dt = game.clock.tick(FPS) / 1000.0
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                if game.scene == "play":
-                    game._save_progress()
-                running = False
+                game.request_quit()      # 点窗口关闭按钮 → 先弹退出确认
             elif event.type == pygame.VIDEORESIZE:
                 game.handle_resize(event)
             elif event.type == pygame.KEYDOWN:
@@ -1073,6 +1233,10 @@ def main():
                 running = False
         game.update(dt)
         game.draw()
+        if game.quit_requested:
+            if game.scene == "play":
+                game._save_progress()
+            running = False
     pygame.quit()
     sys.exit(0)
 

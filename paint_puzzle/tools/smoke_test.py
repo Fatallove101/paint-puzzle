@@ -418,11 +418,65 @@ def test_scene_flow():
     # ESC 返回主菜单(不退出)
     quit_app = game.on_key(pygame.K_ESCAPE)
     check("flow: ESC in play -> menu", not quit_app and game.scene == "menu")
-    # 主菜单"退出游戏"返回退出标记
+    # 主菜单"退出游戏"应先弹确认弹窗,而不是直接退出
     buttons2 = dict((k, r.center) for k, label, r, enabled in game._menu_buttons())
     quit_app = game.handle_event(make_click(buttons2["exit"]))
-    check("flow: exit option quits app", quit_app)
+    check("flow: exit opens confirm dialog (no immediate quit)",
+          (not quit_app) and game.confirm_quit)
+    _yes, no = game._confirm_rects()
+    game.handle_event(make_click(no.center))
+    check("flow: cancel closes confirm dialog",
+          (not game.confirm_quit) and (not game.quit_requested))
+    game.request_quit()
+    yes, _no = game._confirm_rects()
+    game.handle_event(make_click(yes.center))
+    check("flow: confirm marks quit requested",
+          game.quit_requested and (not game.confirm_quit))
     pygame_quit(game)
+
+
+def test_refresh_and_fair_random():
+    """困难模式:刷色不消耗步数;公平随机只抽"当前仍需要的颜色";刷色后仍可解。"""
+    game = game_mod.Game()
+    game.mode = "hard"
+    game._load_level(1)
+    check("refresh: quota exists",
+          game.refresh_total > 0 and game.refresh_left == game.refresh_total)
+    brush = game.row_brushes[0]
+    c0 = brush.color
+    steps0 = game.steps_used
+    game.arm_refresh = True
+    ok = game.refresh_brush(brush)
+    check("refresh: works, auto-closes, no step cost",
+          ok and (not game.arm_refresh)
+          and game.refresh_left == game.refresh_total - 1
+          and game.steps_used == steps0 and brush.color != c0)
+    need = game._needed_colors()
+    check("fair random: refreshed color comes from needed set",
+          (not need) or (brush.color in need))
+    game2 = game_mod.Game()
+    game2.mode = "hard"
+    game2._load_level(2)
+    need2 = game2._needed_colors()
+    check("fair random: initial brush colors are needed colors",
+          all(b.color in need2 for b in game2.all_brushes))
+    present = {b.color for b in game2.all_brushes}
+    check("fair random: every needed color is on some brush",
+          all(c in present for c in need2))
+    ok2 = True
+    guard = 0
+    while (not game._matched()) and guard < 40:
+        game.use_hint()
+        if game.hint_brush is None:
+            ok2 = False
+            break
+        game.paint(game.hint_brush)
+        settle(game)
+        guard += 1
+    check("hard: still solvable via hints after refreshes",
+          ok2 and game._matched())
+    pygame_quit(game)
+    pygame_quit(game2)
 
 
 def test_hard_recolor_brush():
@@ -488,6 +542,7 @@ def main():
     test_undo_easy()
     test_hard_mode_brush_color_and_undo()
     test_hard_recolor_brush()
+    test_refresh_and_fair_random()
     cleanup_save()   # 前面测试可能写过进度,先清掉再验证"继续游戏"禁用态
     test_scene_flow()
     cleanup_save()

@@ -5,7 +5,7 @@
 ;       出现在 "设置 → 应用 → 已安装的应用",点"卸载"即启动卸载向导。
 
 #define MyAppName "方块染色解谜"
-#define MyAppVersion "2.2"
+#define MyAppVersion "2.4"
 #define MyAppPublisher "PaintPuzzle"
 
 [Setup]
@@ -28,7 +28,7 @@ OutputBaseFilename={#MyAppName}-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-VersionInfoVersion=2.2.0.0
+VersionInfoVersion=2.4.0.0
 
 [Languages]
 Name: "chinesesimp"; MessagesFile: "ChineseSimplified.isl"

@@ -12,7 +12,7 @@
 
 | 平台 | 文件 | 发布页 |
 |---|---|---|
-| **Windows**(Python + pygame) | `PaintPuzzle-Setup.exe` | [v2.3](https://github.com/Fatallove101/paint-puzzle/releases/tag/v2.3) |
+| **Windows**(Python + pygame) | `PaintPuzzle-Setup-v2.4.exe` | [v2.4-win](https://github.com/Fatallove101/paint-puzzle/releases/tag/v2.4-win) |
 | **Android**(Godot 4 移植版) | `PaintPuzzle-Android-v2.4.0.apk` | [v2.4.0-android](https://github.com/Fatallove101/paint-puzzle/releases/tag/v2.4.0-android) |
 
 两个版本玩法规则一致:原版是 **Python + pygame** 桌面版(`paint_puzzle/`),手机版是 **Godot 4 触控移植版**(`paint_puzzle_godot/`)。

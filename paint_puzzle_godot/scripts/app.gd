@@ -27,6 +27,7 @@ var _btn_recolor: Button
 var _btn_refresh: Button
 var _overlay: Button
 var _last_action_ms := 0
+var _confirm: ConfirmationDialog
 
 
 func _toggle_sound(btn: Button) -> void:
@@ -40,10 +41,57 @@ func _on_level_button(num: int) -> void:
 
 
 func _ready() -> void:
+	# 自己接管"关闭窗口/返回键",以便先弹确认弹窗
+	get_tree().auto_accept_quit = false
 	_load_save()
 	_build_theme()
 	_build_screens()
+	_build_confirm()
 	_goto("menu")
+
+
+## 系统级事件:Android 返回手势 → 返回上一级;关闭窗口 → 退出确认
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
+		go_back()
+	elif what == NOTIFICATION_WM_CLOSE_REQUEST:
+		ask_quit()
+
+
+## 键盘/手柄:ESC(ui_cancel)= 返回上一级
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("ui_cancel"):
+		accept_event()
+		go_back()
+
+
+func _build_confirm() -> void:
+	_confirm = ConfirmationDialog.new()
+	_confirm.title = "退出游戏"
+	_confirm.dialog_text = "确定要退出游戏吗?\n当前进度已自动保存。"
+	_confirm.ok_button_text = "退出游戏"
+	_confirm.cancel_button_text = "取消"
+	_confirm.confirmed.connect(func(): get_tree().quit())
+	add_child(_confirm)
+
+
+func ask_quit() -> void:
+	if _confirm == null:
+		_build_confirm()
+	_confirm.popup_centered(Vector2i(460, 220))
+
+
+## 返回上一级:对局→主菜单;设置/难度→主菜单;关卡选择→难度;主菜单→退出确认
+func go_back() -> void:
+	match _scene:
+		"play":
+			_to_menu()
+		"settings", "difficulty":
+			_goto("menu")
+		"levels":
+			_goto("difficulty")
+		_:
+			ask_quit()
 
 
 # ------------------------------------------------------------------ 存档
@@ -174,7 +222,7 @@ func _build_menu() -> void:
 	b_set.pressed.connect(func(): _goto("settings"))
 	vb.add_child(b_set)
 	var b_exit := _mk_button("退出游戏", Vector2(300, 64))
-	b_exit.pressed.connect(func(): get_tree().quit())
+	b_exit.pressed.connect(func(): ask_quit())
 	vb.add_child(b_exit)
 
 
