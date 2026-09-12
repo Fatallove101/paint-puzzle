@@ -15,6 +15,11 @@ paint_puzzle/dist/
 paint_puzzle/installer_out/
 paint_puzzle/*.spec
 
+# Godot(Android 版):构建产物与含签名密码的导出预设
+paint_puzzle_godot/.godot/
+paint_puzzle_godot/build/
+paint_puzzle_godot/export_presets.cfg
+
 # 编辑器/系统
 .DS_Store
 Thumbs.db

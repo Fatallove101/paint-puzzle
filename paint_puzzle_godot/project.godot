@@ -1,0 +1,32 @@
+; Godot 工程配置 · 方块染色解谜(Android 版)
+; 设计分辨率 960x720 横屏,等比缩放适配各种手机
+
+config_version=5
+
+[application]
+
+config/name="方块染色解谜"
+config/description="Paint Puzzle · 策略染色解谜游戏(Android 版)"
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+config/icon="res://icon.png"
+boot_splash/bg_color=Color(0.125, 0.141, 0.172, 1)
+boot_splash/show_image=false
+
+[display]
+
+window/size/viewport_width=960
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="keep"
+window/handheld/orientation=0
+
+[input_devices]
+
+pointing/emulate_touch_from_mouse=true
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true
