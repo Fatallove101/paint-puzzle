@@ -4,7 +4,14 @@
 
 > **[English](README.md)** · **[中文](README.zh-CN.md)**
 
-> **⬇️ Download the Windows installer:** [paint-puzzle **v2.3**](https://github.com/Fatallove101/paint-puzzle/releases/latest) · `PaintPuzzle-Setup.exe`
+## ⬇️ Downloads
+
+| Platform | File | Release |
+|---|---|---|
+| **Windows** (Python + pygame) | `PaintPuzzle-Setup.exe` | [v2.3](https://github.com/Fatallove101/paint-puzzle/releases/tag/v2.3) |
+| **Android** (Godot 4 port) | `PaintPuzzle-Android-v2.3.apk` | [v2.3-android](https://github.com/Fatallove101/paint-puzzle/releases/tag/v2.3-android) |
+
+Two editions share the same puzzle rules: the original **Python + pygame** desktop game (`paint_puzzle/`) and a **Godot 4 touch port for Android** (`paint_puzzle_godot/`).
 
 Paint one whole row or column at a time. Later strokes overwrite earlier ones, so you have to think backwards to reproduce the target pattern within a limited number of moves.
 
@@ -63,6 +70,17 @@ Build the installer (needs Inno Setup 6 + `installer\ChineseSimplified.isl`):
 ISCC.exe installer\方块染色解谜.iss
 # -> installer_out\方块染色解谜-Setup.exe
 ```
+
+## Build the Android APK
+
+Requires [Godot 4.x](https://godotengine.org/) (with Android export templates), JDK 17 and the Android SDK (command-line tools are enough). Then:
+
+1. copy `paint_puzzle_godot/export_presets.cfg.example` to `export_presets.cfg` and fill in your keystore paths/passwords;
+2. set the Android SDK / JDK paths in Godot's editor settings;
+3. run the logic self-test: `godot --headless --path paint_puzzle_godot --script res://tests/logic_test.gd`
+4. export: `godot --headless --path paint_puzzle_godot --export-release "Android" build/PaintPuzzle-release.apk`
+
+> Tip: in Godot's editor settings, existing (empty or wrong) `export/android/*` keys are **not** overwritten by simply appending — replace those lines when configuring a new machine.
 
 ## License
 

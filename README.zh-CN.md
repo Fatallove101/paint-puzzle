@@ -8,7 +8,14 @@
 
 > **[English](README.md)** · **中文**
 
-> **⬇️ 下载 Windows 安装包:**[方块染色解谜 **v2.3**](https://github.com/Fatallove101/paint-puzzle/releases/latest) · `PaintPuzzle-Setup.exe`
+## ⬇️ 下载
+
+| 平台 | 文件 | 发布页 |
+|---|---|---|
+| **Windows**(Python + pygame) | `PaintPuzzle-Setup.exe` | [v2.3](https://github.com/Fatallove101/paint-puzzle/releases/tag/v2.3) |
+| **Android**(Godot 4 移植版) | `PaintPuzzle-Android-v2.3.apk` | [v2.3-android](https://github.com/Fatallove101/paint-puzzle/releases/tag/v2.3-android) |
+
+两个版本玩法规则一致:原版是 **Python + pygame** 桌面版(`paint_puzzle/`),手机版是 **Godot 4 触控移植版**(`paint_puzzle_godot/`)。
 
 ## 特性
 
@@ -67,6 +74,17 @@ ISCC.exe installer\方块染色解谜.iss
 ## 截图
 
 (运行后截图可放这里,README 会更直观。)
+
+## 构建 Android APK
+
+需要 [Godot 4.x](https://godotengine.org/)(含 Android 导出模板)、JDK 17、Android SDK(命令行工具即可)。步骤:
+
+1. 把 `paint_puzzle_godot/export_presets.cfg.example` 复制为 `export_presets.cfg`,填入你的签名密钥路径与密码;
+2. 在 Godot 编辑器设置里填好 Android SDK / JDK 路径;
+3. 跑逻辑自测:`godot --headless --path paint_puzzle_godot --script res://tests/logic_test.gd`
+4. 导出:`godot --headless --path paint_puzzle_godot --export-release "Android" build/PaintPuzzle-release.apk`
+
+> 提示:Godot 编辑器设置里**已存在**的 `export/android/*`(可能是空值或错误路径)不会因为"追加"而生效,换机器配置时需要**替换**那几行。
 
 ## 许可协议
 
