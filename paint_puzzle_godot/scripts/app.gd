@@ -25,6 +25,7 @@ var _btn_undo: Button
 var _btn_hint: Button
 var _btn_recolor: Button
 var _overlay: Button
+var _last_action_ms := 0
 
 
 func _toggle_sound(btn: Button) -> void:
@@ -391,6 +392,11 @@ func _refresh_play() -> void:
 func _on_paint(orient: String, index: int) -> void:
 	if _state != "play":
 		return
+	# 去抖:防止同一次触摸被重复分发导致"连染两次"(步数也会多扣)
+	var now := Time.get_ticks_msec()
+	if now - _last_action_ms < 60:
+		return
+	_last_action_ms = now
 	if not game.paint(orient, index):
 		return
 	_play("click")

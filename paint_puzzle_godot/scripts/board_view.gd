@@ -76,19 +76,16 @@ func col_brush_rect(c: int) -> Rect2:
 func _gui_input(event: InputEvent) -> void:
 	if game == null:
 		return
-	var pos := Vector2.ZERO
-	var pressed := false
-	if event is InputEventScreenTouch:
-		pos = (event as InputEventScreenTouch).position
-		pressed = (event as InputEventScreenTouch).pressed
-	elif event is InputEventMouseButton:
-		var mb := event as InputEventMouseButton
-		pos = mb.position
-		pressed = mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT
-	if not pressed:
+	# 只处理"触摸"事件:桌面端鼠标会通过 emulate_touch_from_mouse 转成触摸,
+	# 手机端触摸也不会再产生模拟鼠标事件(已在 project.godot 关闭),
+	# 这样一次点击只会染色一次,不会出现"填涂颜色与笔刷颜色不一致"。
+	if not (event is InputEventScreenTouch):
+		return
+	var touch := event as InputEventScreenTouch
+	if not touch.pressed:
 		return
 	accept_event()
-	_handle_tap(pos)
+	_handle_tap(touch.position)
 
 
 func _handle_tap(pos: Vector2) -> void:
