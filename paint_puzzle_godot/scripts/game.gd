@@ -33,6 +33,9 @@ var undo_stack: Array = []
 var recolor_total := 0      # 困难:可自选笔刷色次数 = 总步数一半
 var recolor_left := 0
 var arm_recolor := false
+var refresh_total := 0      # 困难:可"刷色"(重随笔刷颜色,不落子)次数
+var refresh_left := 0
+var arm_refresh := false
 var last_hint: Dictionary = {}
 var dead_end := false
 
@@ -72,15 +75,20 @@ func reset() -> void:
 		board.append(PPLevel.zeros(cols))
 	row_brushes = []
 	col_brushes = []
+	# 困难模式:初始笔刷颜色只从"本关仍需的颜色"里抽(公平随机)
 	for _r in rows:
-		row_brushes.append(_rand_brush() if mode == "hard" else 1)
+		row_brushes.append(_fair_color() if mode == "hard" else 1)
 	for _c in cols:
-		col_brushes.append(_rand_brush() if mode == "hard" else 1)
+		col_brushes.append(_fair_color() if mode == "hard" else 1)
+	_ensure_needed_present()
 	steps_used = 0
 	undo_stack = []
 	recolor_total = maxi(1, int(max_steps / 2)) if mode == "hard" else 0
 	recolor_left = recolor_total
+	refresh_total = maxi(3, num_colors * 2) if mode == "hard" else 0
+	refresh_left = refresh_total
 	arm_recolor = false
+	arm_refresh = false
 	last_hint = {}
 	dead_end = false
 	if cur_color < 1 or cur_color > num_colors:
@@ -89,6 +97,94 @@ func reset() -> void:
 
 func _rand_brush() -> int:
 	return _rng.randi_range(1, num_colors)
+
+
+## 当前局面下"仍然需要的颜色"集合(来自反推求解器的剩余步骤)
+func needed_colors() -> Array:
+	var k := _solution_suffix_index()
+	if k < 0:
+		return []
+	var seen := {}
+	for i in range(k, solution.size()):
+		seen[int(solution[i].color)] = true
+	return seen.keys()
+
+
+## 从当前棋盘出发,最少还需要 solution 的哪一段(返回起始下标;k==size 表示已完成)
+func _solution_suffix_index() -> int:
+	var n := solution.size()
+	var best := -1
+	for k in range(n + 1):
+		var b := PPLevel.copy_board(board)
+		for i in range(k, n):
+			PPLevel.apply_op(b, solution[i])
+		if PPLevel.same_board(b, target):
+			best = k
+	return best
+
+
+func _fair_color() -> int:
+	var pool := needed_colors()
+	if pool.is_empty():
+		return _rng.randi_range(1, num_colors)
+	return int(pool[_rng.randi_range(0, pool.size() - 1)])
+
+
+func _fair_pool(exclude: int) -> Array:
+	var out: Array = []
+	for c in needed_colors():
+		if int(c) != exclude:
+			out.append(int(c))
+	return out
+
+
+func _all_colors_except(exclude: int) -> Array:
+	var out: Array = []
+	for c in range(1, num_colors + 1):
+		if c != exclude:
+			out.append(c)
+	return out
+
+
+func _assign_brush(orient: String, index: int, color: int) -> void:
+	if orient == "row":
+		row_brushes[index] = color
+	else:
+		col_brushes[index] = color
+
+
+func _brush_keys() -> Array:
+	var out: Array = []
+	for r in rows:
+		out.append(["row", r])
+	for c in cols:
+		out.append(["col", c])
+	return out
+
+
+## 保证"仍需要的每种颜色"至少出现在一支笔刷上,避免运气死局
+func _ensure_needed_present() -> void:
+	if mode != "hard":
+		return
+	var need := needed_colors()
+	var keys := _brush_keys()
+	if need.is_empty() or keys.size() < need.size():
+		return
+	var present := {}
+	for k in keys:
+		present[brush_color(k[0], k[1])] = true
+	for c in need:
+		if present.has(int(c)):
+			continue
+		var target = null
+		for k in keys:
+			if not need.has(brush_color(k[0], k[1])):
+				target = k
+				break
+		if target == null:
+			target = keys[0]
+		_assign_brush(target[0], target[1], int(c))
+		present[int(c)] = true
 
 
 func brush_color(orient: String, index: int) -> int:
@@ -125,17 +221,31 @@ func paint(orient: String, index: int) -> bool:
 
 func _reroll(orient: String, index: int) -> void:
 	var cur := brush_color(orient, index)
-	var choices: Array = []
-	for c in range(1, num_colors + 1):
-		if c != cur:
-			choices.append(c)
-	if choices.is_empty():
+	# 公平随机:优先从"当前仍需的颜色"里抽,抽不到再退回全色板
+	var pool := _fair_pool(cur)
+	if pool.is_empty():
+		pool = _all_colors_except(cur)
+	if pool.is_empty():
 		return
-	var v: int = choices[_rng.randi_range(0, choices.size() - 1)]
-	if orient == "row":
-		row_brushes[index] = v
-	else:
-		col_brushes[index] = v
+	_assign_brush(orient, index,
+		int(pool[_rng.randi_range(0, pool.size() - 1)]))
+
+
+## 困难模式"刷色":重随某支笔刷的颜色,不染色、不消耗步数(消耗 1 次刷色次数)
+func refresh_brush(orient: String, index: int) -> bool:
+	if mode != "hard" or not arm_refresh or refresh_left <= 0:
+		return false
+	var cur := brush_color(orient, index)
+	var pool := _fair_pool(cur)
+	if pool.is_empty():
+		pool = _all_colors_except(cur)
+	if pool.is_empty():
+		return false
+	_assign_brush(orient, index,
+		int(pool[_rng.randi_range(0, pool.size() - 1)]))
+	refresh_left -= 1
+	arm_refresh = false
+	return true
 
 
 func _snapshot() -> void:

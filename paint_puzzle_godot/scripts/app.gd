@@ -24,6 +24,7 @@ var _lbl_msg: Label
 var _btn_undo: Button
 var _btn_hint: Button
 var _btn_recolor: Button
+var _btn_refresh: Button
 var _overlay: Button
 var _last_action_ms := 0
 
@@ -109,6 +110,14 @@ func _mk_button(text: String, size: Vector2) -> Button:
 	b.text = text
 	b.custom_minimum_size = size
 	b.focus_mode = Control.FOCUS_NONE
+	return b
+
+
+## 顶栏小按钮(字号小一点,便于一行放下 5 个)
+func _bar_button(text: String, pos: Vector2) -> Button:
+	var b := _mk_button(text, Vector2(86, 44))
+	b.position = pos
+	b.add_theme_font_size_override("font_size", 20)
 	return b
 
 
@@ -279,6 +288,7 @@ func _build_play() -> void:
 	_board.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_board.paint_requested.connect(_on_paint)
 	_board.recolor_requested.connect(_on_recolor)
+	_board.refresh_requested.connect(_on_refresh)
 	_board.color_selected.connect(_on_color_selected)
 	s.add_child(_board)
 
@@ -289,28 +299,30 @@ func _build_play() -> void:
 	_lbl_steps.position = Vector2(290, 28)
 	s.add_child(_lbl_steps)
 
-	_btn_undo = _mk_button("撤销", Vector2(106, 44))
-	_btn_undo.position = Vector2(524, 24)
+	# 顶栏按钮:撤销 / 提示 / 刷色 / 改色 / 重试(困难模式才有刷色与改色)
+	_btn_undo = _bar_button("撤销", Vector2(500, 24))
 	_btn_undo.pressed.connect(_on_undo)
 	s.add_child(_btn_undo)
 
-	_btn_hint = _mk_button("提示", Vector2(106, 44))
-	_btn_hint.position = Vector2(634, 24)
+	_btn_hint = _bar_button("提示", Vector2(590, 24))
 	_btn_hint.pressed.connect(_on_hint)
 	s.add_child(_btn_hint)
 
-	_btn_recolor = _mk_button("改色", Vector2(106, 44))
-	_btn_recolor.position = Vector2(744, 24)
+	_btn_refresh = _bar_button("刷色", Vector2(680, 24))
+	_btn_refresh.pressed.connect(_on_refresh_button)
+	s.add_child(_btn_refresh)
+
+	_btn_recolor = _bar_button("改色", Vector2(770, 24))
 	_btn_recolor.pressed.connect(_on_recolor_button)
 	s.add_child(_btn_recolor)
 
-	var b_retry := _mk_button("重试", Vector2(106, 44))
-	b_retry.position = Vector2(854, 24)
+	var b_retry := _bar_button("重试", Vector2(860, 24))
 	b_retry.pressed.connect(func(): _reset_level())
 	s.add_child(b_retry)
 
-	var b_menu := _mk_button("菜单", Vector2(90, 44))
-	b_menu.position = Vector2(420, 24)
+	var b_menu := _mk_button("菜单", Vector2(76, 32))
+	b_menu.position = Vector2(46, 74)
+	b_menu.add_theme_font_size_override("font_size", 18)
 	b_menu.pressed.connect(_to_menu)
 	s.add_child(b_menu)
 
@@ -385,6 +397,9 @@ func _refresh_play() -> void:
 	_btn_recolor.visible = (game.mode == "hard")
 	_btn_recolor.disabled = game.recolor_left <= 0
 	_btn_recolor.text = "改色 ×%d" % game.recolor_left
+	_btn_refresh.visible = (game.mode == "hard")
+	_btn_refresh.disabled = game.refresh_left <= 0
+	_btn_refresh.text = "刷色 ×%d" % game.refresh_left
 	_overlay.visible = false
 	_board.queue_redraw()
 
@@ -425,10 +440,33 @@ func _on_recolor_button() -> void:
 	if game.mode != "hard" or game.recolor_left <= 0:
 		return
 	game.arm_recolor = not game.arm_recolor
+	if game.arm_recolor:
+		game.arm_refresh = false
 	_play("click")
 	if game.arm_recolor:
 		_show_msg("改色模式:先点颜色,再点要改的画刷")
 	_refresh_play()
+
+
+func _on_refresh_button() -> void:
+	if game.mode != "hard" or game.refresh_left <= 0:
+		return
+	game.arm_refresh = not game.arm_refresh
+	if game.arm_refresh:
+		game.arm_recolor = false
+	_play("click")
+	if game.arm_refresh:
+		_show_msg("刷色模式:点一支画刷,让它重新随机颜色(不消耗步数)")
+	_refresh_play()
+
+
+func _on_refresh(orient: String, index: int) -> void:
+	if _state != "play":
+		return
+	if game.refresh_brush(orient, index):
+		_play("click")
+		_show_msg("已刷色,剩余 %d 次" % game.refresh_left)
+		_refresh_play()
 
 
 func _on_undo() -> void:

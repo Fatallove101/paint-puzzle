@@ -5,6 +5,7 @@ extends Control
 
 signal paint_requested(orient: String, index: int)
 signal recolor_requested(orient: String, index: int)
+signal refresh_requested(orient: String, index: int)
 signal color_selected(idx: int)
 
 const BOARD_X := 330.0
@@ -113,7 +114,9 @@ func _handle_tap(pos: Vector2) -> void:
 
 
 func _tap_brush(orient: String, index: int) -> void:
-	if game.mode == "hard" and game.arm_recolor:
+	if game.mode == "hard" and game.arm_refresh:
+		refresh_requested.emit(orient, index)
+	elif game.mode == "hard" and game.arm_recolor:
 		recolor_requested.emit(orient, index)
 	else:
 		paint_requested.emit(orient, index)

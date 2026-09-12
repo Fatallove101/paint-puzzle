@@ -22,6 +22,7 @@ func _initialize() -> void:
 	test_easy_paint_and_undo()
 	test_hard_mode_and_recolor()
 	test_hint_dead_end_detection()
+	test_refresh_and_fair_random()
 	print("========================================")
 	if fails.is_empty():
 		print("all logic tests passed")
@@ -202,3 +203,53 @@ func test_hint_dead_end_detection() -> void:
 		g.is_dead_end_state())
 	var r2: Dictionary = g.use_hint()
 	check("dead-end: hint reports dead end", r2.has("dead_end"))
+
+
+func test_refresh_and_fair_random() -> void:
+	# 刷色:不消耗步数、一次一用、颜色必定变化
+	var g = GameLib.new()
+	g.start(1, "hard")
+	check("refresh: quota exists",
+		g.refresh_total > 0 and g.refresh_left == g.refresh_total)
+	var steps0: int = g.steps_used
+	var c0: int = g.brush_color("row", 0)
+	g.arm_refresh = true
+	var ok: bool = g.refresh_brush("row", 0)
+	check("refresh: works, auto-closes, no step cost",
+		ok and not g.arm_refresh and g.refresh_left == g.refresh_total - 1
+		and g.steps_used == steps0 and g.brush_color("row", 0) != c0)
+	# 公平随机:刷出来的颜色属于"当前仍需的颜色"
+	var need: Array = g.needed_colors()
+	check("fair random: refreshed color comes from needed set",
+		need.is_empty() or need.has(g.brush_color("row", 0)))
+	# 初始笔刷颜色也只来自需求集合,且每种需求颜色至少出现在一支笔刷上
+	var g2 = GameLib.new()
+	g2.start(2, "hard")
+	var need2: Array = g2.needed_colors()
+	var keys: Array = g2._brush_keys()
+	var all_ok := true
+	for k in keys:
+		if not need2.has(g2.brush_color(k[0], k[1])):
+			all_ok = false
+	check("fair random: initial brush colors are needed colors", all_ok)
+	var present := {}
+	for k in keys:
+		present[g2.brush_color(k[0], k[1])] = true
+	var covered := true
+	for c in need2:
+		if not present.has(int(c)):
+			covered = false
+	check("fair random: every needed color is on some brush", covered)
+	# 刷色之后仍可按提示通关(不会因刷色陷入死局)
+	var ok2 := true
+	var guard := 0
+	while not g.matched() and guard < 40:
+		var r: Dictionary = g.use_hint()
+		if r.is_empty() or r.has("dead_end"):
+			ok2 = false
+			break
+		var op: Dictionary = r.move
+		g.paint(op.orient, int(op.index))
+		guard += 1
+	check("hard: still solvable via hints after refreshes",
+		ok2 and g.matched())
